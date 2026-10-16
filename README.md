@@ -2,7 +2,7 @@
 
 ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
 
-Status: step 1 done (session 23): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, tests against stock OrdinaryDiffEq. The design is in the design repository (`../writeup/notes/`); this library's design is `../writeup/explorations/solvers.md` (written before keys; `src/ODECore.jl` is the keys form).
+Status: steps 1 and 3 done (session 23; Rodas5 with the library's own dual numbers, the user's option 2 — ForwardDiff stays outside the trait world until it is wrapped): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, tests against stock OrdinaryDiffEq. The design is in the design repository (`../writeup/notes/`); this library's design is `../writeup/explorations/solvers.md` (written before keys; `src/ODECore.jl` is the keys form).
 
 **How it is built (keys):**
 - `ODEModel{T}`: `rhs!(m, du, u, t)`. A plain function is held as a `DynamicFn` in the library's `FunctionModel{P}`, so the solver compiles once per parameter type `P`, never per function. A model type that implements `rhs!` is the implementing type, and the solver compiles for it (the comparison).
@@ -46,7 +46,7 @@ Each in fresh sessions; the stock numbers are from `../experiments/solvers/`.
 |---|---|---|---|---|
 | 1 | first Tsit5 solve, precompiled user package | 0.16 s | < 20 ms | 73–76 ms, a plain function at the prompt (0.14–0.17 s) |
 | 2 | first Tsit5 solve, a new model type at the prompt | 0.16 s | 10–50 ms | a new model function: 14 ms (0.10–0.11 s); a new model type: compiles the solver for it |
-| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | not yet |
+| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | 129–137 ms first solve; a second model function 51 ms (0.069–0.075 s); first solve of a problem without parameters 53–57 ms. Jacobian by the library's own duals (`LDual{N}`), a second dynamic call per function |
 | 4 | a new discrete callback type or closure | 0.84–0.96 s | < 20 ms | 12–14 ms (0.67–0.83 s) |
 | 5 | gradient through Tsit5: first loss, second loss closure | 1.97–2.73 s, then 2.48 s | < 100 ms, then < 10 ms | not yet |
 | 6 | `Vector{Float32}` state, not precompiled | 2.06 s | once, then cached | not yet |

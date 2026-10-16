@@ -15,8 +15,10 @@ module TraitDifferentialEquations
 using TraitWorld
 include("ODECore.jl")
 using .ODECore
-using .ODECore: RHSSig, CondSig, AffectSig, FunctionModel, FunctionCallback, keep_callback, solve_ode, SolverOptions
-export ODEProblem, solve, Tsit5, DiscreteCallback, ODESolution, ODEModel, rhs!, Callback, condition, affect!, IntegratorView
+using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback,
+                solve_ode, SolverOptions, LDual
+export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEModel, rhs!, jacobian!, Callback, condition,
+       affect!, IntegratorView
 
 "A problem in SciML's form: `f(du, u, p, t)` in place, an initial state, a time span, parameters."
 struct ODEProblem{F,P}
@@ -50,6 +52,21 @@ function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, 
     return _solve_fm(_function_model(prob.f, prob.p), prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
 end
 _function_model(@nospecialize(f), p::P) where {P} = FunctionModel{P}(dynamic_fn(RHSSig{P}, Nothing, f), p)
+
+"""
+    solve(prob::ODEProblem, Rodas5(); callback, saveat, abstol, reltol)
+
+The plain function becomes two dynamic calls: at the plain signature, and at the library's dual
+numbers `LDual{N}` for the Jacobian (`N`, the chunk, is the state's length up to 8). The solver's
+code is compiled per `(P, N)`; a new function compiles only itself, at both signatures.
+"""
+function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing, kw...)
+    N = min(length(prob.u0), 8)
+    return _solve_ad(_function_model_ad(prob.f, prob.p, Val(N)), prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
+end
+_function_model_ad(@nospecialize(f), p::P, ::Val{N}) where {P,N} =
+    FunctionModelAD{P,N}(dynamic_fn(RHSSig{P}, Nothing, f), dynamic_fn(DualSig{P,N}, Nothing, f), p)
+_solve_ad(m::FunctionModelAD{P,N}, u0, tspan, alg, p::P, cbs, opts) where {P,N} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
 _solve_fm(m::FunctionModel{P}, u0, tspan, alg, p::P, cbs, opts) where {P} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
 
 """
@@ -58,13 +75,13 @@ _solve_fm(m::FunctionModel{P}, u0, tspan, alg, p::P, cbs, opts) where {P} = solv
 A model of a type that conforms to `ODEModel` (it implements `rhs!` itself): the solver's
 code is compiled for that type, in the conformer's image or the session.
 """
-solve(model, u0::AbstractVector, tspan, alg::Tsit5; p = nothing, callback = nothing, kw...) =
+solve(model, u0::AbstractVector, tspan, alg::Union{Tsit5,Rodas5}; p = nothing, callback = nothing, kw...) =
     solve_ode(model, Vector{Float64}(u0), (Float64(tspan[1]), Float64(tspan[2])), alg, p, _kept(callback), _options(; kw...))
 
 # The precompile workload: the solver for plain functions with `Vector{Float64}` and no parameters,
 # with and without callbacks. Any other function of these signatures runs this code: only the
 # function itself is compiled, at its declared signature, when the problem is solved.
-_wl_rhs!(du, u, p, t) = (du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)
+_wl_rhs!(du, u, p, t) = (du[1] = 10.0 * (u[2] - u[1]); du[2] = u[1] * (28.0 - u[3]) - u[2]; du[3] = u[1] * u[2] - 8 / 3 * u[3]; nothing)
 _wl_rhs0!(du, u, p, t) = (du .= -u; nothing)
 TraitWorld.@workload begin
     prob = ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1), [10.0, 28.0, 8 / 3])
@@ -72,6 +89,9 @@ TraitWorld.@workload begin
     solve(prob, Tsit5(); saveat = [0.05, 0.1])
     solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u[1] += 1.0; nothing)))
     solve(ODEProblem(_wl_rhs0!, [1.0], (0.0, 0.1)), Tsit5())
+    solve(prob, Rodas5())
+    solve(ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1)), Rodas5())   # no parameters (p::Nothing)
+    solve(prob, Rodas5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u[1] += 1.0; nothing)))
 end
 
 end

@@ -8,14 +8,37 @@
 #     `Dynamic{IntegratorView}`, so a new callback compiles nothing in the solver.
 @trait_module module ODECore
 using TraitWorld
-export ODEModel, rhs!, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, SolverOptions,
-       solve_ode, FunctionModel, FunctionCallback, keep_callback, RHSSig, CondSig, AffectSig
+using LinearAlgebra: lu!, ldiv!
+export ODEModel, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
+       solve_ode, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, LDual
 
 # --- the traits --------------------------------------------------------------------------
 
-"What the solver needs from a model: the right-hand side, in place, at element type `T`."
+"""
+What the solver needs from a model: the right-hand side, in place, at element type `T`, and its
+Jacobian in `u` (for implicit methods). The default Jacobian is by finite differences of `rhs!`; a
+model that can do better implements it (the library's `FunctionModelAD` does, with its own duals).
+"""
 @trait ODEModel{T} begin
     rhs!(m::ODEModel{T}, du::Vector{T}, u::Vector{T}, t::Float64)::Nothing
+    jacobian!(m::ODEModel{T}, J::Matrix{T}, u::Vector{T}, t::Float64)::Nothing = fd_jacobian!(m, J, u, t)
+end
+
+"The default Jacobian: forward differences of `rhs!` (an internal function: `m` is a trait object)."
+function fd_jacobian!(m, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
+    n = length(u)
+    f0 = zeros(Float64, n); f1 = zeros(Float64, n); up = copy(u)
+    rhs!(m, f0, u, t)
+    for j in 1:n
+        h = sqrt(eps(Float64)) * max(abs(u[j]), 1.0)
+        up[j] = u[j] + h
+        rhs!(m, f1, up, t)
+        for i in 1:n
+            J[i, j] = (f1[i] - f0[i]) / h
+        end
+        up[j] = u[j]
+    end
+    return nothing
 end
 
 """
@@ -52,6 +75,98 @@ end
 rhs!(m::FunctionModel, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
 @implement ODEModel{Float64} FunctionModel{P} where {P}
 
+# --- the library's own dual numbers (option 2 of session 23: no ForwardDiff in the trait world yet) ----
+
+"""
+    LDual{N}
+
+A forward-mode dual number owned by this library: a value and `N` partials, for the Jacobians of
+implicit methods. A plain right-hand side is compiled for it once, at the dual signature, through
+a dynamic call; ForwardDiff stays outside the trait world until it is wrapped.
+"""
+struct LDual{N} <: Real
+    v::Float64
+    p::NTuple{N,Float64}
+end
+LDual{N}(x::Real) where {N} = LDual{N}(Float64(x), ntuple(_ -> 0.0, Val(N)))
+@inline _lift(::LDual{N}, x::Real) where {N} = LDual{N}(x)
+@inline _sc(a::NTuple{N,Float64}, s::Float64) where {N} = ntuple(k -> a[k] * s, Val(N))
+@inline _ad(a::NTuple{N,Float64}, b::NTuple{N,Float64}) where {N} = ntuple(k -> a[k] + b[k], Val(N))
+@inline _ax(a::NTuple{N,Float64}, s::Float64, b::NTuple{N,Float64}, r::Float64) where {N} = ntuple(k -> a[k] * s + b[k] * r, Val(N))
+Base.convert(::Type{LDual{N}}, x::Real) where {N} = LDual{N}(x)
+Base.convert(::Type{LDual{N}}, x::LDual{N}) where {N} = x
+Base.promote_rule(::Type{LDual{N}}, ::Type{<:Real}) where {N} = LDual{N}
+Base.zero(::Type{LDual{N}}) where {N} = LDual{N}(0.0)
+Base.one(::Type{LDual{N}}) where {N} = LDual{N}(1.0)
+Base.zero(::LDual{N}) where {N} = LDual{N}(0.0)
+Base.one(::LDual{N}) where {N} = LDual{N}(1.0)
+Base.float(x::LDual) = x
+Base.isfinite(x::LDual) = isfinite(x.v)
+Base.isnan(x::LDual) = isnan(x.v)
+Base.:(==)(a::LDual, b::LDual) = a.v == b.v
+Base.:(<)(a::LDual, b::LDual) = a.v < b.v
+Base.:(<=)(a::LDual, b::LDual) = a.v <= b.v
+Base.isless(a::LDual, b::LDual) = isless(a.v, b.v)
+Base.:+(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v + b.v, _ad(a.p, b.p))
+Base.:-(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v - b.v, _ax(a.p, 1.0, b.p, -1.0))
+Base.:-(a::LDual{N}) where {N} = LDual{N}(-a.v, _sc(a.p, -1.0))
+Base.:*(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v * b.v, _ax(a.p, b.v, b.p, a.v))
+Base.:/(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v / b.v, _ax(a.p, 1 / b.v, b.p, -a.v / (b.v * b.v)))
+Base.:+(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v + b, a.p)
+Base.:+(a::Real, b::LDual{N}) where {N} = b + a
+Base.:-(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v - b, a.p)
+Base.:-(a::Real, b::LDual{N}) where {N} = LDual{N}(a - b.v, _sc(b.p, -1.0))
+Base.:*(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v * b, _sc(a.p, Float64(b)))
+Base.:*(a::Real, b::LDual{N}) where {N} = b * a
+Base.:/(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v / b, _sc(a.p, 1 / Float64(b)))
+Base.:/(a::Real, b::LDual{N}) where {N} = LDual{N}(a / b.v, _sc(b.p, -a / (b.v * b.v)))
+Base.:^(a::LDual{N}, n::Integer) where {N} = LDual{N}(a.v^n, _sc(a.p, n * a.v^(n - 1)))
+Base.:^(a::LDual{N}, x::Real) where {N} = LDual{N}(a.v^x, _sc(a.p, x * a.v^(x - 1)))
+Base.sqrt(a::LDual{N}) where {N} = (r = sqrt(a.v); LDual{N}(r, _sc(a.p, 0.5 / r)))
+Base.exp(a::LDual{N}) where {N} = (e = exp(a.v); LDual{N}(e, _sc(a.p, e)))
+Base.log(a::LDual{N}) where {N} = LDual{N}(log(a.v), _sc(a.p, 1 / a.v))
+Base.sin(a::LDual{N}) where {N} = LDual{N}(sin(a.v), _sc(a.p, cos(a.v)))
+Base.cos(a::LDual{N}) where {N} = LDual{N}(cos(a.v), _sc(a.p, -sin(a.v)))
+Base.tanh(a::LDual{N}) where {N} = (y = tanh(a.v); LDual{N}(y, _sc(a.p, 1 - y * y)))
+Base.abs(a::LDual{N}) where {N} = a.v < 0 ? -a : a
+Base.abs2(a::LDual{N}) where {N} = a * a
+Base.inv(a::LDual{N}) where {N} = 1.0 / a
+
+"The signature of a plain right-hand side at the library's duals."
+const DualSig{P,N} = Tuple{Vector{LDual{N}},Vector{LDual{N}},P,Float64}
+
+"""
+A plain function as a model for implicit methods: dynamic calls at the plain and at the dual
+signature (chunk size `N`, chosen by the library from the state's length). The solver compiles per
+`(P, N)`, never per function.
+"""
+struct FunctionModelAD{P,N}
+    f::DynamicFn{RHSSig{P},Nothing}
+    fd::DynamicFn{DualSig{P,N},Nothing}
+    p::P
+end
+rhs!(m::FunctionModelAD, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
+function jacobian!(m::FunctionModelAD{P,N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {P,N}
+    n = length(u)
+    ud = Vector{LDual{N}}(undef, n)
+    dd = Vector{LDual{N}}(undef, n)
+    for c0 in 1:N:n                                   # one dynamic call per chunk of N columns
+        for j in 1:n
+            ud[j] = LDual{N}(u[j], ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N)))
+        end
+        m.fd(dd, ud, m.p, t)
+        for k in 1:N
+            col = c0 + k - 1
+            col > n && break
+            for i in 1:n
+                J[i, col] = dd[i].p[k]
+            end
+        end
+    end
+    return nothing
+end
+@implement ODEModel{Float64} FunctionModelAD{P,N} where {P,N}
+
 "A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
 struct FunctionCallback
     cond::DynamicFn{CondSig,Bool}
@@ -67,6 +182,7 @@ keep_callback(cb::Callback) = Dynamic{Callback}(cb)
 # --- options, solution, the integrator ---------------------------------------------------------
 
 struct Tsit5 end
+struct Rodas5 end
 
 struct SolverOptions
     abstol::Float64
@@ -251,6 +367,206 @@ function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float6
                         i.nf += 1
                         i.u_modified = false
                     end
+                end
+                i.terminated && break
+            end
+            q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
+            dt = min(dt / q, opts.dtmax)
+            i.qold = max(EEst, 1e-4)
+        else
+            i.nreject += 1
+            dt = dt / min(1 / qmin, q11 / gamma)
+        end
+    end
+    i.terminated && (retcode = :Terminated)
+    return ODESolution{Float64}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+end
+
+
+# --- Rodas5 (tableau from OrdinaryDiffEqRosenbrockTableaus 2.0.0; Di Marzo 1993) --------------------
+
+const R5A = [
+    0 0 0 0 0 0 0 0
+    2.0 0 0 0 0 0 0 0
+    3.040894194418781 1.041747909077569 0 0 0 0 0 0
+    2.576417536461461 1.62208306077664 -0.9089668560264532 0 0 0 0 0
+    2.760842080225597 1.446624659844071 -0.3036980084553738 0.2877498600325443 0 0 0 0
+    -14.09640773051259 6.925207756232704 -41.47510893210728 2.343771018586405 24.13215229196062 0 0 0
+    -14.09640773051259 6.925207756232704 -41.47510893210728 2.343771018586405 24.13215229196062 1 0 0
+    -14.09640773051259 6.925207756232704 -41.47510893210728 2.343771018586405 24.13215229196062 1 1 0
+]
+const R5C = [
+    0 0 0 0 0 0 0
+    -10.31323885133993 0 0 0 0 0 0
+    -21.04823117650003 -7.234992135176716 0 0 0 0 0
+    32.22751541853323 -4.943732386540191 19.44922031041879 0 0 0 0
+    -20.69865579590063 -8.816374604402768 1.260436877740897 -0.7495647613787146 0 0 0
+    -46.22004352711257 -17.49534862857472 -289.6389582892057 93.60855400400906 318.3822534212147 0 0
+    34.20013733472935 -14.1553540271769 57.823356409884 25.83362985412365 1.408950972071624 -6.551835421242162 0
+    42.57076742291101 -13.80770672017997 93.98938432427124 18.77919633714503 -31.5835918722337 -6.685968952921985 -5.810979938412932
+]
+const R5c = [0, 0.38, 0.3878509998321533, 0.483971893787384, 0.457047700881958, 1, 1, 1]
+const R5d = [0.19, -0.1823079225333714636, -0.319231832186874912, 0.3449828624725343, -0.377417564392089818, 0, 0, 0]
+const R5H = [
+    27.354592673333357 -6.925207756232857 26.40037733258859 0.5635230501052979 -4.699151156849391 -1.6008677469422725 -1.5306074446748028 -1.3929872940716344
+    44.19024239501722 1.3677947663381929e-13 202.93261852171622 -35.5669339789154 -181.91095152160645 3.4116351403665033 2.5793540257308067 2.2435122582734066
+    -44.0988150021747 -5.755396159656812e-13 -181.26175034586677 56.99302194811676 183.21182741427398 -7.480257918273637 -5.792426076169686 -5.32503859794143
+]
+const R5gamma = 0.19
+const R5b = [R5A[8, 1:7]..., 1.0]
+
+"Rodas5's state between steps: the integrator's view for callbacks, the stages, the Jacobian and W."
+mutable struct Rodas5Integrator{P}
+    const u::Vector{Float64}
+    const uprev::Vector{Float64}
+    t::Float64
+    dt::Float64
+    const p::P
+    u_modified::Bool
+    terminated::Bool
+    const unew::Vector{Float64}
+    const ks::Vector{Vector{Float64}}
+    const kint::Vector{Vector{Float64}}
+    const fsal::Vector{Float64}
+    const du::Vector{Float64}
+    const du1::Vector{Float64}
+    const dT::Vector{Float64}
+    const ltmp::Vector{Float64}
+    const J::Matrix{Float64}
+    const W::Matrix{Float64}
+    qold::Float64
+    naccept::Int
+    nreject::Int
+    nf::Int
+    njac::Int
+end
+@implement IntegratorView Rodas5Integrator{P} where {P}
+
+"One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."
+function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, reltol::Float64)
+    u, t, n = i.u, i.t, length(i.u)
+    ks, du, du1, dT, ltmp, J, W, unew = i.ks, i.du, i.du1, i.dT, i.ltmp, i.J, i.W, i.unew
+    rhs!(m, i.fsal, u, t)
+    jacobian!(m, J, u, t)
+    i.njac += 1
+    h = sqrt(eps(Float64)) * max(abs(t), 1.0)          # the time derivative, by a forward difference
+    rhs!(m, du, u, t + h)
+    i.nf += 2
+    @inbounds for j in 1:n; dT[j] = (du[j] - i.fsal[j]) / h; end
+    dtgamma = dt * R5gamma
+    copyto!(W, J)                                      # W = J - I / (dt γ), as OrdinaryDiffEq's W_transform
+    @inbounds for k in 1:n; W[k, k] -= 1 / dtgamma; end
+    F = lu!(W)
+    @inbounds for j in 1:n; ltmp[j] = i.fsal[j] + dt * R5d[1] * dT[j]; end
+    ldiv!(ks[1], F, ltmp)
+    ks[1] .*= -1
+    for stage in 2:8
+        @inbounds for j in 1:n
+            acc = u[j]
+            for l in 1:stage-1; acc += R5A[stage, l] * ks[l][j]; end
+            unew[j] = acc
+        end
+        if !(stage > 2 && R5c[stage] == R5c[stage-1] && all(l -> R5A[stage, l] == R5A[stage-1, l], 1:stage-1))
+            rhs!(m, du, unew, t + R5c[stage] * dt)
+            i.nf += 1
+        end
+        @inbounds for j in 1:n
+            acc = 0.0
+            for l in 1:stage-1; acc += R5C[stage, l] / dt * ks[l][j]; end
+            ltmp[j] = du[j] + dt * R5d[stage] * dT[j] + acc
+        end
+        ldiv!(ks[stage], F, ltmp)
+        ks[stage] .*= -1
+    end
+    acc2 = 0.0
+    @inbounds for j in 1:n
+        y = u[j]
+        for l in 1:8; y += R5b[l] * ks[l][j]; end
+        unew[j] = y
+        sc = abstol + max(abs(u[j]), abs(y)) * reltol
+        acc2 += abs2(ks[8][j] / sc)                    # the embedded error: btilde = (0, …, 0, 1)
+    end
+    @inbounds for r in 1:3, j in 1:n
+        acc = 0.0
+        for l in 1:8; acc += R5H[r, l] * ks[l][j]; end
+        i.kint[r][j] = acc
+    end
+    return sqrt(acc2 / n)
+end
+
+"Rodas5's interpolant between `u` (at θ = 0) and `unew` (θ = 1)."
+function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
+    θ1 = 1 - θ
+    k1, k2, k3 = i.kint[1], i.kint[2], i.kint[3]
+    @inbounds for j in eachindex(out)
+        out[j] = θ1 * i.u[j] + θ * (i.unew[j] + θ1 * (k1[j] + θ * (k2[j] + θ * k3[j])))
+    end
+    return out
+end
+
+"""
+    solve_ode(m, u0, tspan, Rodas5(), p, callbacks, opts) -> ODESolution
+
+Rodas5 with the model's Jacobian (`jacobian!`: by the library's duals for a plain function, by
+finite differences or the model's own otherwise), dense LU, and a PI step-size controller.
+"""
+function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, alg::Rodas5, p,
+                   callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions)
+    t0, tf = tspan
+    n = length(u0)
+    z() = zeros(Float64, n)
+    i = Rodas5Integrator{typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false, z(),
+                                    [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
+                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0)
+    iv = Dynamic{IntegratorView}(i)
+    # the initial step: as Tsit5's driver, from f(u0)
+    rhs!(m, i.fsal, i.u, t0)
+    i.nf += 1
+    sc(x) = opts.abstol + abs(x) * opts.reltol
+    d0 = sqrt(sum(abs2(i.u[j] / sc(i.u[j])) for j in 1:n) / n)
+    d1 = sqrt(sum(abs2(i.fsal[j] / sc(i.u[j])) for j in 1:n) / n)
+    dt = min((d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1, opts.dtmax)
+    ts = Float64[t0]
+    us = Vector{Float64}[copy(u0)]
+    saveat = opts.saveat
+    isave = 1
+    if !isempty(saveat) && saveat[1] == t0
+        isave = 2
+    elseif !isempty(saveat)
+        empty!(ts); empty!(us)
+    end
+    beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
+    retcode = :Success
+    iters = 0
+    while i.t < tf && !i.terminated
+        iters += 1
+        if iters > opts.maxiters
+            retcode = :MaxIters
+            break
+        end
+        dt = min(dt, tf - i.t)
+        EEst = rodas5_step!(m, i, dt, opts.abstol, opts.reltol)
+        q11 = EEst^beta1
+        if EEst <= 1.0
+            tnew = i.t + dt
+            if isempty(saveat)
+                push!(ts, tnew); push!(us, copy(i.unew))
+            else
+                while isave <= length(saveat) && saveat[isave] <= tnew
+                    push!(ts, saveat[isave])
+                    push!(us, rodas5_interp!(zeros(Float64, n), (saveat[isave] - i.t) / dt, i))
+                    isave += 1
+                end
+            end
+            copyto!(i.uprev, i.u)
+            copyto!(i.u, i.unew)
+            i.t = tnew
+            i.naccept += 1
+            for cb in callbacks
+                if condition(cb, i.u, i.t, iv)
+                    i.u_modified = true
+                    affect!(cb, iv)
+                    i.u_modified = false
                 end
                 i.terminated && break
             end

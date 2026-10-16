@@ -50,3 +50,23 @@ end
     I = TraitDifferentialEquations.ODECore.Tsit5Integrator{Float64,Vector{Float64}}
     @test length(string(nameof(I))) < 100
 end
+
+@testset "TraitDifferentialEquations: Rodas5 with the library's duals" begin
+    prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
+    st = solve(prob, Rodas5(); abstol = 1e-10, reltol = 1e-10)
+    @test st.retcode === :Success && isapprox(st.u[end], REF; rtol = 1e-9)
+    # the library's dual Jacobian equals the analytic one
+    J = zeros(3, 3); u = [1.0, 2.0, 3.0]
+    m = TraitDifferentialEquations.ODECore.FunctionModelAD{Vector{Float64},3}(
+        dynamic_fn(TraitDifferentialEquations.RHSSig{Vector{Float64}}, Nothing, lorenz!),
+        dynamic_fn(TraitDifferentialEquations.DualSig{Vector{Float64},3}, Nothing, lorenz!), P0)
+    TraitDifferentialEquations.ODECore.jacobian!(m, J, u, 0.0)
+    @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
+    # a stiff problem: Robertson, mass conserved
+    rober!(du, u, p, t) = (du[1] = -0.04u[1] + 1e4 * u[2] * u[3]; du[2] = 0.04u[1] - 1e4 * u[2] * u[3] - 3e7 * u[2]^2; du[3] = 3e7 * u[2]^2; nothing)
+    sr = solve(ODEProblem(rober!, [1.0, 0.0, 0.0], (0.0, 1e5)), Rodas5(); abstol = 1e-8, reltol = 1e-6)
+    @test sr.retcode === :Success && isapprox(sum(sr.u[end]), 1.0; atol = 1e-10) && isapprox(sr.u[end][1], 0.0178; atol = 1e-3)
+    # a model type: its Jacobian by the default (finite differences)
+    sA = solve(Lorenz(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
+    @test isapprox(sA.u[end], REF; rtol = 1e-7)
+end
