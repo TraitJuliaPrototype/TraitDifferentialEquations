@@ -2,7 +2,13 @@
 
 ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
 
-Status: not started. The design is in the design repository (`../writeup/notes/`); this library's design is `../writeup/explorations/solvers.md`.
+Status: step 1 done (session 23): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, tests against stock OrdinaryDiffEq. The design is in the design repository (`../writeup/notes/`); this library's design is `../writeup/explorations/solvers.md` (written before keys; `src/ODECore.jl` is the keys form).
+
+**How it is built (keys):**
+- `ODEModel{T}`: `rhs!(m, du, u, t)`. A plain function is held as a `DynamicFn` in the library's `FunctionModel{P}`, so the solver compiles once per parameter type `P`, never per function. A model type that implements `rhs!` is the implementing type, and the solver compiles for it (the comparison).
+- `IntegratorView{T, P}`: fields only (`u`, `t`, `p`, `u_modified`, `terminated`), so there is no implementing type; callbacks see the integrator as a `Dynamic{IntegratorView}`.
+- `Callback`: kept as `Dynamic{Callback}`; `DiscreteCallback(condition, affect!)` from plain functions is the library's `FunctionCallback` of two `DynamicFn`s.
+- Automatic differentiation (steps 3–4): Rodas5's Jacobian with a library-owned tag; gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`, tested in session 23), with a guard for closures that capture duals.
 
 ## What it demonstrates
 
@@ -36,21 +42,21 @@ SciML today recompiles the solver for every new callback closure (0.84–0.96 s 
 
 Each in fresh sessions; the stock numbers are from `../experiments/solvers/`.
 
-| # | What | Stock SciML | Prediction |
-|---|---|---|---|
-| 1 | first Tsit5 solve, precompiled user package | 0.16 s | < 20 ms |
-| 2 | first Tsit5 solve, a new model type at the prompt | 0.16 s | 10–50 ms |
-| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms |
-| 4 | a new discrete callback type or closure | 0.84–0.96 s | < 20 ms |
-| 5 | gradient through Tsit5: first loss, second loss closure | 1.97–2.73 s, then 2.48 s | < 100 ms, then < 10 ms |
-| 6 | `Vector{Float32}` state, not precompiled | 2.06 s | once, then cached |
-| 7 | rows 1–5 after CairoMakie, DataFrames, Plots, in all six load orders | to measure | identical; 0 trait-world invalidations |
-| 8 | a package defining the `nextfloat(::Dual)` pirate | silent | reported (sealing comes later) |
-| 9 | the three error cases of findings §17 | 22–44 frames, longest line up to 33,673 | caught at the conformance; otherwise ≤ 12 frames |
-| 10 | `typeof(integrator)`: Tsit5, Tsit5 + callback, Rodas5 | 3,553 / 3,683 / 24,426 characters | < 100 each |
-| 11 | run time per step, n = 3 and n = 1,000, by model mode | stock | within 1.3× of compiled at n = 3, 2% at n = 1,000 |
-| 12 | trimmed binary solving Lorenz with Tsit5, Rodas5 and `Bounce` | to measure | runs; a few MB |
-| 13 | precompile time and image sizes | stock images | to measure: the price of placement |
+| # | What | Stock SciML | Prediction | Measured (session 23, stock 1.13.2; stock SciML on 1.13.2 in brackets) |
+|---|---|---|---|---|
+| 1 | first Tsit5 solve, precompiled user package | 0.16 s | < 20 ms | 73–76 ms, a plain function at the prompt (0.14–0.17 s) |
+| 2 | first Tsit5 solve, a new model type at the prompt | 0.16 s | 10–50 ms | a new model function: 14 ms (0.10–0.11 s); a new model type: compiles the solver for it |
+| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | not yet |
+| 4 | a new discrete callback type or closure | 0.84–0.96 s | < 20 ms | 12–14 ms (0.67–0.83 s) |
+| 5 | gradient through Tsit5: first loss, second loss closure | 1.97–2.73 s, then 2.48 s | < 100 ms, then < 10 ms | not yet |
+| 6 | `Vector{Float32}` state, not precompiled | 2.06 s | once, then cached | not yet |
+| 7 | rows 1–5 after CairoMakie, DataFrames, Plots, in all six load orders | to measure | identical; 0 trait-world invalidations | CSV, DataFrames, CairoMakie before or after: row 2 unchanged, row 4 35–51 ms, row 1 0.7–1.05 s; 2–4 ODECore methods invalidated (their pirates of Base invalidate by design; open-issues §4) |
+| 8 | a package defining the `nextfloat(::Dual)` pirate | silent | reported (sealing comes later) | not yet |
+| 9 | the three error cases of findings §17 | 22–44 frames, longest line up to 33,673 | caught at the conformance; otherwise ≤ 12 frames | not yet |
+| 10 | `typeof(integrator)`: Tsit5, Tsit5 + callback, Rodas5 | 3,553 / 3,683 / 24,426 characters | < 100 each | `Tsit5Integrator{Float64, Vector{Float64}}`, with or without callbacks (3,553 / 3,683) |
+| 11 | run time per step, n = 3 and n = 1,000, by model mode | stock | within 1.3× of compiled at n = 3, 2% at n = 1,000 | not yet |
+| 12 | trimmed binary solving Lorenz with Tsit5, Rodas5 and `Bounce` | to measure | runs; a few MB | not yet |
+| 13 | precompile time and image sizes | stock images | to measure: the price of placement | not yet |
 
 **Success:**
 - rows 4 and 5 improve by an order of magnitude;
