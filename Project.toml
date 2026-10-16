@@ -1,9 +1,10 @@
 name = "TraitDifferentialEquations"
 uuid = "fc9886c1-0241-47c4-acfc-eaf7404dec9a"
-authors = ["Frank Hellmann"]
 version = "0.0.1"
+authors = ["Frank Hellmann"]
 
 [deps]
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
 
@@ -11,6 +12,7 @@ TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
 TraitWorld = {path = "../TraitWorld"}
 
 [compat]
+ForwardDiff = "1.4.6"
 julia = "1.13"
 
 [extras]

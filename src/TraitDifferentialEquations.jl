@@ -16,7 +16,7 @@ using TraitWorld
 include("ODECore.jl")
 using .ODECore
 using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback,
-                solve_ode, SolverOptions, LDual
+                solve_ode, SolverOptions, FDual
 export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEModel, rhs!, jacobian!, Callback, condition,
        affect!, IntegratorView
 
@@ -57,7 +57,7 @@ _function_model(@nospecialize(f), p::P) where {P} = FunctionModel{P}(dynamic_fn(
     solve(prob::ODEProblem, Rodas5(); callback, saveat, abstol, reltol)
 
 The plain function becomes two dynamic calls: at the plain signature, and at the library's dual
-numbers `LDual{N}` for the Jacobian (`N`, the chunk, is the state's length up to 8). The solver's
+numbers (ForwardDiff's `Dual` with the library's tag, `FDual{N}`) for the Jacobian (`N`, the chunk, is the state's length up to 8). The solver's
 code is compiled per `(P, N)`; a new function compiles only itself, at both signatures.
 """
 function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing, kw...)

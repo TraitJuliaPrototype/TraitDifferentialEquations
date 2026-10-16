@@ -9,15 +9,16 @@
 @trait_module module ODECore
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
+import ForwardDiff
 export ODEModel, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, LDual
+       solve_ode, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
 
 # --- the traits --------------------------------------------------------------------------
 
 """
 What the solver needs from a model: the right-hand side, in place, at element type `T`, and its
 Jacobian in `u` (for implicit methods). The default Jacobian is by finite differences of `rhs!`; a
-model that can do better implements it (the library's `FunctionModelAD` does, with its own duals).
+model that can do better implements it (the library's `FunctionModelAD` does, with ForwardDiff's duals).
 """
 @trait ODEModel{T} begin
     rhs!(m::ODEModel{T}, du::Vector{T}, u::Vector{T}, t::Float64)::Nothing
@@ -75,65 +76,16 @@ end
 rhs!(m::FunctionModel, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
 @implement ODEModel{Float64} FunctionModel{P} where {P}
 
-# --- the library's own dual numbers (option 2 of session 23: no ForwardDiff in the trait world yet) ----
+# --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
+# (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
 
-"""
-    LDual{N}
-
-A forward-mode dual number owned by this library: a value and `N` partials, for the Jacobians of
-implicit methods. A plain right-hand side is compiled for it once, at the dual signature, through
-a dynamic call; ForwardDiff stays outside the trait world until it is wrapped.
-"""
-struct LDual{N} <: Real
-    v::Float64
-    p::NTuple{N,Float64}
-end
-LDual{N}(x::Real) where {N} = LDual{N}(Float64(x), ntuple(_ -> 0.0, Val(N)))
-@inline _lift(::LDual{N}, x::Real) where {N} = LDual{N}(x)
-@inline _sc(a::NTuple{N,Float64}, s::Float64) where {N} = ntuple(k -> a[k] * s, Val(N))
-@inline _ad(a::NTuple{N,Float64}, b::NTuple{N,Float64}) where {N} = ntuple(k -> a[k] + b[k], Val(N))
-@inline _ax(a::NTuple{N,Float64}, s::Float64, b::NTuple{N,Float64}, r::Float64) where {N} = ntuple(k -> a[k] * s + b[k] * r, Val(N))
-Base.convert(::Type{LDual{N}}, x::Real) where {N} = LDual{N}(x)
-Base.convert(::Type{LDual{N}}, x::LDual{N}) where {N} = x
-Base.promote_rule(::Type{LDual{N}}, ::Type{<:Real}) where {N} = LDual{N}
-Base.zero(::Type{LDual{N}}) where {N} = LDual{N}(0.0)
-Base.one(::Type{LDual{N}}) where {N} = LDual{N}(1.0)
-Base.zero(::LDual{N}) where {N} = LDual{N}(0.0)
-Base.one(::LDual{N}) where {N} = LDual{N}(1.0)
-Base.float(x::LDual) = x
-Base.isfinite(x::LDual) = isfinite(x.v)
-Base.isnan(x::LDual) = isnan(x.v)
-Base.:(==)(a::LDual, b::LDual) = a.v == b.v
-Base.:(<)(a::LDual, b::LDual) = a.v < b.v
-Base.:(<=)(a::LDual, b::LDual) = a.v <= b.v
-Base.isless(a::LDual, b::LDual) = isless(a.v, b.v)
-Base.:+(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v + b.v, _ad(a.p, b.p))
-Base.:-(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v - b.v, _ax(a.p, 1.0, b.p, -1.0))
-Base.:-(a::LDual{N}) where {N} = LDual{N}(-a.v, _sc(a.p, -1.0))
-Base.:*(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v * b.v, _ax(a.p, b.v, b.p, a.v))
-Base.:/(a::LDual{N}, b::LDual{N}) where {N} = LDual{N}(a.v / b.v, _ax(a.p, 1 / b.v, b.p, -a.v / (b.v * b.v)))
-Base.:+(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v + b, a.p)
-Base.:+(a::Real, b::LDual{N}) where {N} = b + a
-Base.:-(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v - b, a.p)
-Base.:-(a::Real, b::LDual{N}) where {N} = LDual{N}(a - b.v, _sc(b.p, -1.0))
-Base.:*(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v * b, _sc(a.p, Float64(b)))
-Base.:*(a::Real, b::LDual{N}) where {N} = b * a
-Base.:/(a::LDual{N}, b::Real) where {N} = LDual{N}(a.v / b, _sc(a.p, 1 / Float64(b)))
-Base.:/(a::Real, b::LDual{N}) where {N} = LDual{N}(a / b.v, _sc(b.p, -a / (b.v * b.v)))
-Base.:^(a::LDual{N}, n::Integer) where {N} = LDual{N}(a.v^n, _sc(a.p, n * a.v^(n - 1)))
-Base.:^(a::LDual{N}, x::Real) where {N} = LDual{N}(a.v^x, _sc(a.p, x * a.v^(x - 1)))
-Base.sqrt(a::LDual{N}) where {N} = (r = sqrt(a.v); LDual{N}(r, _sc(a.p, 0.5 / r)))
-Base.exp(a::LDual{N}) where {N} = (e = exp(a.v); LDual{N}(e, _sc(a.p, e)))
-Base.log(a::LDual{N}) where {N} = LDual{N}(log(a.v), _sc(a.p, 1 / a.v))
-Base.sin(a::LDual{N}) where {N} = LDual{N}(sin(a.v), _sc(a.p, cos(a.v)))
-Base.cos(a::LDual{N}) where {N} = LDual{N}(cos(a.v), _sc(a.p, -sin(a.v)))
-Base.tanh(a::LDual{N}) where {N} = (y = tanh(a.v); LDual{N}(y, _sc(a.p, 1 - y * y)))
-Base.abs(a::LDual{N}) where {N} = a.v < 0 ? -a : a
-Base.abs2(a::LDual{N}) where {N} = a * a
-Base.inv(a::LDual{N}) where {N} = 1.0 / a
+"The library's tag for ForwardDiff's duals: they are the library's, whatever the model function."
+struct ODETag end
+"ForwardDiff's dual number with the library's tag and chunk size `N`."
+const FDual{N} = ForwardDiff.Dual{ODETag,Float64,N}
 
 "The signature of a plain right-hand side at the library's duals."
-const DualSig{P,N} = Tuple{Vector{LDual{N}},Vector{LDual{N}},P,Float64}
+const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 
 """
 A plain function as a model for implicit methods: dynamic calls at the plain and at the dual
@@ -148,18 +100,18 @@ end
 rhs!(m::FunctionModelAD, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
 function jacobian!(m::FunctionModelAD{P,N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {P,N}
     n = length(u)
-    ud = Vector{LDual{N}}(undef, n)
-    dd = Vector{LDual{N}}(undef, n)
+    ud = Vector{FDual{N}}(undef, n)
+    dd = Vector{FDual{N}}(undef, n)
     for c0 in 1:N:n                                   # one dynamic call per chunk of N columns
         for j in 1:n
-            ud[j] = LDual{N}(u[j], ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N)))
+            ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
         end
         m.fd(dd, ud, m.p, t)
         for k in 1:N
             col = c0 + k - 1
             col > n && break
             for i in 1:n
-                J[i, col] = dd[i].p[k]
+                J[i, col] = ForwardDiff.partials(dd[i], k)
             end
         end
     end

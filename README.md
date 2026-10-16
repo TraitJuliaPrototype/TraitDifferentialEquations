@@ -46,7 +46,7 @@ Each in fresh sessions; the stock numbers are from `../experiments/solvers/`.
 |---|---|---|---|---|
 | 1 | first Tsit5 solve, precompiled user package | 0.16 s | < 20 ms | 73–76 ms, a plain function at the prompt (0.14–0.17 s) |
 | 2 | first Tsit5 solve, a new model type at the prompt | 0.16 s | 10–50 ms | a new model function: 14 ms (0.10–0.11 s); a new model type: compiles the solver for it |
-| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | 129–137 ms first solve; a second model function 51 ms (0.069–0.075 s); first solve of a problem without parameters 53–57 ms. Jacobian by the library's own duals (`LDual{N}`), a second dynamic call per function |
+| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | 129–137 ms first solve; a second model function 51 ms (0.069–0.075 s); first solve of a problem without parameters 53–57 ms. Jacobian by the library's own duals (`LDual{N}`), a second dynamic call per function. Since session 24: ForwardDiff's `Dual` with the library's tag (`FDual{N}`), called directly under wrapping by facts: 72–77 ms first solve in every load order of CSV, DataFrames, CairoMakie; a second model function 65–92 ms |
 | 4 | a new discrete callback type or closure | 0.84–0.96 s | < 20 ms | 12–14 ms (0.67–0.83 s) |
 | 5 | gradient through Tsit5: first loss, second loss closure | 1.97–2.73 s, then 2.48 s | < 100 ms, then < 10 ms | not yet |
 | 6 | `Vector{Float32}` state, not precompiled | 2.06 s | once, then cached | not yet |
