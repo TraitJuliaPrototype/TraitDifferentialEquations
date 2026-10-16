@@ -1,0 +1,13 @@
+name = "TraitDifferentialEquations"
+uuid = "fc9886c1-0241-47c4-acfc-eaf7404dec9a"
+authors = ["Frank Hellmann"]
+version = "0.0.1"
+
+[deps]
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+TraitWorld = {path = "../TraitWorld"}
+
+[compat]
+julia = "1.13"
