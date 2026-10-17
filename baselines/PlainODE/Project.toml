@@ -1,0 +1,9 @@
+name = "PlainODE"
+uuid = "2ab8b7f6-06b2-45d2-a1d8-2b0547764a6c"
+version = "0.0.1"
+authors = ["Frank Hellmann"]
+
+[deps]
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"

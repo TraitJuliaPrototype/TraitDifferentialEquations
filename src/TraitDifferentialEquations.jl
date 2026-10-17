@@ -132,6 +132,9 @@ TraitWorld.@workload begin
     solve(prob, Tsit5())
     solve(prob, Tsit5(); saveat = [0.05, 0.1])
     solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u[1] += 1.0; nothing)))
+    # the integrator's writable fields, as callbacks write them
+    solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.terminated = true; nothing)))
+    solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u_modified = false; nothing)))
     solve(ODEProblem(_wl_rhs0!, [1.0], (0.0, 0.1)), Tsit5())
     solve(prob, Rodas5())
     solve(ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1)), Rodas5())   # no parameters (p::Nothing)

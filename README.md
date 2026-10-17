@@ -37,7 +37,7 @@ SciML today recompiles the solver for every new callback closure (0.84–0.96 s 
 
 **Baselines:**
 - **(a) stock SciML:** OrdinaryDiffEqTsit5, OrdinaryDiffEqRosenbrock and ForwardDiff;
-- **(b) the same code without traits:** FunctionWrappers for the model, `Vector{Any}` plus assertions for callbacks. This isolates what the traits add over discipline.
+- **(b) the same code without traits** (`baselines/PlainODE`, session 27, Tsit5 only): FunctionWrappers for the model, `Vector{Any}` plus assertions for callbacks, the same gradient tag. This isolates what the traits add over discipline (table below).
 
 ## Measurements
 
@@ -58,6 +58,22 @@ Each in fresh sessions; the stock numbers are from `../experiments/solvers/`. Th
 | 11 | run time per step, n = 3 and n = 1,000, by model mode | stock | within 1.3× of compiled at n = 3, 2% at n = 1,000, including the policy's run-time sites | patched (session 27, `scripts/runtime.jl`, minimum of 20 solves, every step saved, OrdinaryDiffEq without dense output): Lorenz, n = 3: plain function 206 ns per step, model type 173 ns (**1.19×**), OrdinaryDiffEq 355 ns. A diffusion chain, n = 1,000: plain function 7.9 µs, model type 8.0 µs (**within 1%**), OrdinaryDiffEq 6.9 µs: the stage loops here are plain loops, OrdinaryDiffEq's are fused with `@muladd`, 15% faster |
 | 12 | trimmed binary solving Lorenz with Tsit5, Rodas5 and `Bounce` | to measure | runs; a few MB | not yet |
 | 13 | precompile time, image sizes, image load time (stock and patched) | stock images | to measure: the price of placement and of piece 5 | session 27 (`../experiments/demos/images.jl`, each package compiled again with its dependencies compiled): TraitDifferentialEquations 8.2 s patched, 8.9 s stock; image 9.9 MB native code patched, 7.1 MB stock (piece 5 keeps the policy's code); `using` 0.29 s patched, 0.22 s stock. TraitWorld itself: 30 s and 38 MB patched, 23 s and 28 MB stock; `using` 0.13–0.14 s |
+
+**Against baseline (b), PlainODE** (session 27; `baselines/PlainODE`, `scripts/baseline.jl`; patched, view caches off, ms; loads = CSV, DataFrames, CairoMakie):
+
+| | TraitDifferentialEquations: no loads / loads before / loads after | PlainODE: no loads / before / after |
+|---|---|---|
+| `using` | 278–284 / 338 / 278 | 99–112 / 158 / 99 |
+| row 1, first Tsit5 solve | 6.5 / 6.5 / 6.8 | 9.9 / **54** / 10.1 |
+| row 2, a second model function | 6.0 / 6.2 / 6.3 | 5.0 / 4.8 / 5.1 |
+| row 4, a new callback closure | 17 / 29 / 29 | 5.1 / 15 / **144** |
+| row 4, a second one | 5.3–5.9 | 4.5–4.8 |
+| row 5, first gradient | 30 / 36 / 36 | 37 / 39 / 45 |
+| row 5, a second loss closure | 17–20 | 20–22 |
+
+- **What discipline alone gives:** PlainODE (FunctionWrappers, untyped callbacks, the same signature-labelled tag) matches the trait form on rows 2 and 5 in a fresh session, and is faster to load and for a first callback.
+- **What the trait form adds:** no load order changes its numbers (row 1 after the loads: 6.5 against 54 ms; a first callback after them: 29 against 144 ms), and its code is checked where it is defined.
+- **What it costs:** loading TraitWorld (0.17 s more) and about 12 ms more for a session's first callback: the user's closures see the integrator as a `Dynamic{IntegratorView}`, so their field accesses dispatch, and each closure's pointer wrapper is compiled (about 5 ms per closure, as a FunctionWrapper's would be).
 
 **Success:**
 - rows 4 and 5 improve by an order of magnitude;
