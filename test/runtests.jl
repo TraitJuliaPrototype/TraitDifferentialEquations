@@ -93,3 +93,12 @@ end
     @test_throws ArgumentError gradient(p -> sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5();
                                        callback = DiscreteCallback((u, t, i) -> false, i -> nothing)).u[end]), copy(P0))
 end
+
+@testset "TraitDifferentialEquations: a Float32 state (row 6)" begin
+    lorenz32!(du, u, p, t) = (du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)
+    s = solve(ODEProblem(lorenz32!, Float32[1, 0, 0], (0.0, 1.0), Float32[10, 28, 8 / 3]), Tsit5())
+    @test s.retcode === :Success && eltype(s.u[end]) === Float32
+    s64 = solve(ODEProblem(lorenz32!, U0, (0.0, 1.0), P0), Tsit5())
+    @test isapprox(Float64.(s.u[end]), s64.u[end]; rtol = 1e-2)
+end
+

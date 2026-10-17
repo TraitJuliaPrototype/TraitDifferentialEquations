@@ -45,3 +45,6 @@ loss3(p) = sum(abs2, solve(ODEProblem(rossler!, U0, (0.0, 1.0), p), Tsit5()).u[e
 row(5, "a third loss, another model function", @elapsed gradient(loss3, [0.2, 0.2, 5.7]))
 loss4(p) = sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5()).u[end]) / 2
 row(5, "ForwardDiff's own tag (the loss's type), for comparison", @elapsed ForwardDiff.gradient(loss4, copy(P0)))
+
+# row 6: a Vector{Float32} state, which no image holds (compiled once, then a view cache's)
+row(6, "a Float32 state, first solve", @elapsed solve(ODEProblem(lorenz!, Float32[1, 0, 0], (0.0, 1.0), Float32[10, 28, 8 / 3]), Tsit5()))

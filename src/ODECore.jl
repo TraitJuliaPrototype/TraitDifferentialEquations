@@ -78,6 +78,7 @@ rhs!(m::FunctionModel{P,T}, du::Vector{T}, u::Vector{T}, t::Float64) where {P,T}
 
 "The value a step-size controller sees: a dual number's primal value, so that gradients follow the primal's steps."
 primal(x::Float64) = x
+primal(x::AbstractFloat) = Float64(x)
 primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------

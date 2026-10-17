@@ -31,6 +31,7 @@ end
 ODEProblem(f, u0::AbstractVector, tspan, p = nothing) =
     ODEProblem(f, _state(u0), (Float64(tspan[1]), Float64(tspan[2])), p)
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
+_state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)
 
 "A discrete callback from two plain functions: `condition(u, t, integ)::Bool` and `affect!(integ)`."
