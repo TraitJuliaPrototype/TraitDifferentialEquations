@@ -1,4 +1,5 @@
 using Test, TraitDifferentialEquations, TraitWorld
+const ForwardDiff = TraitDifferentialEquations.ForwardDiff
 
 lorenz!(du, u, p, t) = (du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)
 const P0 = [10.0, 28.0, 8 / 3]
@@ -58,7 +59,7 @@ end
     # the library's dual Jacobian equals the analytic one
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
     m = TraitDifferentialEquations.ODECore.FunctionModelAD{Vector{Float64},3}(
-        dynamic_fn(TraitDifferentialEquations.RHSSig{Vector{Float64}}, Nothing, lorenz!),
+        dynamic_fn(TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}, Nothing, lorenz!),
         dynamic_fn(TraitDifferentialEquations.DualSig{Vector{Float64},3}, Nothing, lorenz!), P0)
     TraitDifferentialEquations.ODECore.jacobian!(m, J, u, 0.0)
     @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
@@ -69,4 +70,26 @@ end
     # a model type: its Jacobian by the default (finite differences)
     sA = solve(Lorenz(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
     @test isapprox(sA.u[end], REF; rtol = 1e-7)
+end
+
+@testset "TraitDifferentialEquations: gradients through Tsit5 (row 5)" begin
+    loss1(p) = sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5(); abstol = 1e-10, reltol = 1e-10).u[end])
+    g = gradient(loss1, copy(P0))
+    h = 1e-6
+    fd = [(loss1(P0 .+ h .* (1:3 .== k)) - loss1(P0 .- h .* (1:3 .== k))) / 2h for k in 1:3]
+    @test isapprox(g, fd; rtol = 1e-4)
+    # a second loss closure of the same signature: the same dual type, so the solver's code is shared
+    w = 2.0
+    loss2(p) = w * solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5(); abstol = 1e-10, reltol = 1e-10).u[end][1]
+    g2 = gradient(loss2, copy(P0))
+    fd2 = [(loss2(P0 .+ h .* (1:3 .== k)) - loss2(P0 .- h .* (1:3 .== k))) / 2h for k in 1:3]
+    @test isapprox(g2, fd2; rtol = 1e-4)
+    # nested: a loss that captures an outer level's duals gets ForwardDiff's own tag (session 23's hazard)
+    @test TraitDifferentialEquations._holds_duals(typeof(let d = ForwardDiff.Dual(1.0, 1.0); p -> d * p[1]; end))
+    @test !TraitDifferentialEquations._holds_duals(typeof(loss2))
+    outer(a) = gradient(p -> a[1] * p[1]^2, [3.0])[1]                 # d/da (2 a p) at p = 3: 6
+    @test ForwardDiff.derivative(x -> outer([x]), 1.0) ≈ 6.0
+    # callbacks need Float64 states
+    @test_throws ArgumentError gradient(p -> sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5();
+                                       callback = DiscreteCallback((u, t, i) -> false, i -> nothing)).u[end]), copy(P0))
 end

@@ -63,18 +63,22 @@ end
 
 # --- the library's own conforming types ---------------------------------------------------
 
-"The signature of a plain right-hand side `f(du, u, p, t)`."
-const RHSSig{P} = Tuple{Vector{Float64},Vector{Float64},P,Float64}
+"The signature of a plain right-hand side `f(du, u, p, t)`, at element type `T` (`Float64`, or dual numbers for gradients through `solve`)."
+const RHSSig{P,T} = Tuple{Vector{T},Vector{T},P,Float64}
 const CondSig = Tuple{Vector{Float64},Float64,Dynamic{IntegratorView}}
 const AffectSig = Tuple{Dynamic{IntegratorView}}
 
 "A plain function as a model: a dynamic call at the declared signature, and the parameters."
-struct FunctionModel{P}
-    f::DynamicFn{RHSSig{P},Nothing}
+struct FunctionModel{P,T}
+    f::DynamicFn{RHSSig{P,T},Nothing}
     p::P
 end
-rhs!(m::FunctionModel, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
-@implement ODEModel{Float64} FunctionModel{P} where {P}
+rhs!(m::FunctionModel{P,T}, du::Vector{T}, u::Vector{T}, t::Float64) where {P,T} = (m.f(du, u, m.p, t); nothing)
+@implement ODEModel{T} FunctionModel{P,T} where {P,T}
+
+"The value a step-size controller sees: a dual number's primal value, so that gradients follow the primal's steps."
+primal(x::Float64) = x
+primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
 # (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
@@ -93,7 +97,7 @@ signature (chunk size `N`, chosen by the library from the state's length). The s
 `(P, N)`, never per function.
 """
 struct FunctionModelAD{P,N}
-    f::DynamicFn{RHSSig{P},Nothing}
+    f::DynamicFn{RHSSig{P,Float64},Nothing}
     fd::DynamicFn{DualSig{P,N},Nothing}
     p::P
 end
@@ -216,8 +220,8 @@ function tsit5_step!(m, i::Tsit5Integrator{T}, dt::Float64, abstol::Float64, rel
     acc = 0.0
     @inbounds for j in eachindex(u)
         e = dt * (bt1 * k1[j] + bt2 * k2[j] + bt3 * k3[j] + bt4 * k4[j] + bt5 * k5[j] + bt6 * k6[j] + bt7 * k7[j])
-        sc = abstol + max(abs(u[j]), abs(unew[j])) * reltol
-        acc += abs2(e / sc)
+        sc = abstol + max(abs(primal(u[j])), abs(primal(unew[j]))) * reltol
+        acc += abs2(primal(e) / sc)
     end
     return sqrt(acc / length(u))
 end
@@ -225,16 +229,16 @@ end
 "Hairer's initial step size (Solving ODEs I, II.4), as OrdinaryDiffEq's `ode_determine_initdt` in its simple form."
 function initdt(m, i::Tsit5Integrator{T}, tdir::Float64, opts::SolverOptions) where {T}
     u, f0, t = i.u, i.k1, i.t
-    sc(x) = opts.abstol + abs(x) * opts.reltol
-    d0 = sqrt(sum(abs2(u[j] / sc(u[j])) for j in eachindex(u)) / length(u))
-    d1 = sqrt(sum(abs2(f0[j] / sc(u[j])) for j in eachindex(u)) / length(u))
+    sc(x) = opts.abstol + abs(primal(x)) * opts.reltol
+    d0 = sqrt(sum(abs2(primal(u[j]) / sc(u[j])) for j in eachindex(u)) / length(u))
+    d1 = sqrt(sum(abs2(primal(f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u))
     h0 = (d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1
     h0 = min(h0, opts.dtmax)
     tmp = i.tmp
     @inbounds for j in eachindex(u); tmp[j] = u[j] + h0 * f0[j]; end
     rhs!(m, i.k2, tmp, t + h0)
     i.nf += 1
-    d2 = sqrt(sum(abs2((i.k2[j] - f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u)) / h0
+    d2 = sqrt(sum(abs2(primal(i.k2[j] - f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u)) / h0
     h1 = max(d1, d2) <= 1e-15 ? max(1e-6, h0 * 1e-3) : (0.01 / max(d1, d2))^(1 / 5)
     return min(100 * h0, h1, opts.dtmax)
 end
@@ -257,21 +261,24 @@ end
     solve_ode(m, u0, tspan, Tsit5(), p, callbacks, opts) -> ODESolution
 
 Integrate the model from `u0` over `tspan` with Tsit5 and a PI step-size controller. `p` is
-what callbacks see as `integ.p`; `callbacks` are kept callbacks (`keep_callback`).
+what callbacks see as `integ.p`; `callbacks` are kept callbacks (`keep_callback`). The element
+type `T` is `Float64`, or a dual number for a gradient through the solve; the step-size control
+reads primal values, so a gradient follows the primal solve's steps. Callbacks take `Float64` states.
 """
-function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, alg::Tsit5, p,
-                   callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions)
+function solve_ode(m::ODEModel, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, p,
+                   callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) where {T}
     t0, tf = tspan
     n = length(u0)
-    z() = zeros(Float64, n)
-    i = Tsit5Integrator{Float64,typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false,
+    T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
+    z() = zeros(T, n)
+    i = Tsit5Integrator{T,typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false,
                                             z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0)
     rhs!(m, i.k1, i.u, t0)
     i.nf += 1
     dt = initdt(m, i, 1.0, opts)
     iv = Dynamic{IntegratorView}(i)
     ts = Float64[t0]
-    us = Vector{Float64}[copy(u0)]
+    us = Vector{T}[copy(u0)]
     saveat = opts.saveat
     isave = 1
     if !isempty(saveat) && saveat[1] == t0
@@ -301,7 +308,7 @@ function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float6
                 while isave <= length(saveat) && saveat[isave] <= tnew
                     θ = (saveat[isave] - i.t) / dt
                     push!(ts, saveat[isave])
-                    push!(us, hermite!(zeros(Float64, n), θ, dt, i.u, i.k1, i.unew, i.k7))
+                    push!(us, hermite!(zeros(T, n), θ, dt, i.u, i.k1, i.unew, i.k7))
                     isave += 1
                 end
             end
@@ -310,7 +317,7 @@ function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float6
             copyto!(i.k1, i.k7)
             i.t = tnew
             i.naccept += 1
-            for cb in callbacks
+            T === Float64 && for cb in callbacks
                 if condition(cb, i.u, i.t, iv)
                     i.u_modified = true
                     affect!(cb, iv)
@@ -331,7 +338,7 @@ function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float6
         end
     end
     i.terminated && (retcode = :Terminated)
-    return ODESolution{Float64}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+    return ODESolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
 end
 
 

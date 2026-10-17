@@ -33,3 +33,15 @@ kick = DiscreteCallback((u, t, i) -> t > 0.5 && t < 0.6, i -> (i.u[1] += 1.0; no
 row(4, "a new callback closure", @elapsed solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5(); callback = kick))
 stop = DiscreteCallback((u, t, i) -> u[1] > 5.0, i -> (i.terminated = true; nothing))
 row(4, "a second callback closure", @elapsed solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5(); callback = stop))
+
+# row 5: gradients through Tsit5; tags labelled by the loss's primal signature
+import ForwardDiff
+loss1(p) = sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5()).u[end])
+row(5, "first gradient (Tsit5, 3 parameters)", @elapsed gradient(loss1, copy(P0)))
+w = 2.0
+loss2(p) = w * solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5()).u[end][1]
+row(5, "a second loss closure", @elapsed gradient(loss2, copy(P0)))
+loss3(p) = sum(abs2, solve(ODEProblem(rossler!, U0, (0.0, 1.0), p), Tsit5()).u[end])
+row(5, "a third loss, another model function", @elapsed gradient(loss3, [0.2, 0.2, 5.7]))
+loss4(p) = sum(solve(ODEProblem(lorenz!, U0, (0.0, 1.0), p), Tsit5()).u[end]) / 2
+row(5, "ForwardDiff's own tag (the loss's type), for comparison", @elapsed ForwardDiff.gradient(loss4, copy(P0)))
