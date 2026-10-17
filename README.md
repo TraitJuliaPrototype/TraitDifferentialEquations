@@ -57,7 +57,7 @@ Each in fresh sessions; the stock numbers are from `../experiments/solvers/`. Th
 | 10 | `typeof(integrator)`: Tsit5, Tsit5 + callback, Rodas5 | 3,553 / 3,683 / 24,426 characters | < 100 each | `Tsit5Integrator{Float64, Vector{Float64}}`, with or without callbacks (3,553 / 3,683) |
 | 11 | run time per step, n = 3 and n = 1,000, by model mode | stock | within 1.3× of compiled at n = 3, 2% at n = 1,000, including the policy's run-time sites | patched (session 27, `scripts/runtime.jl`, minimum of 20 solves, every step saved, OrdinaryDiffEq without dense output): Lorenz, n = 3: plain function 206 ns per step, model type 173 ns (**1.19×**), OrdinaryDiffEq 355 ns. A diffusion chain, n = 1,000: plain function 7.9 µs, model type 8.0 µs (**within 1%**), OrdinaryDiffEq 6.9 µs: the stage loops here are plain loops, OrdinaryDiffEq's are fused with `@muladd`, 15% faster |
 | 12 | trimmed binary solving Lorenz with Tsit5, Rodas5 and `Bounce` | to measure | runs; a few MB | not yet |
-| 13 | precompile time, image sizes, image load time (stock and patched) | stock images | to measure: the price of placement and of piece 5 | not yet |
+| 13 | precompile time, image sizes, image load time (stock and patched) | stock images | to measure: the price of placement and of piece 5 | session 27 (`../experiments/demos/images.jl`, each package compiled again with its dependencies compiled): TraitDifferentialEquations 8.2 s patched, 8.9 s stock; image 9.9 MB native code patched, 7.1 MB stock (piece 5 keeps the policy's code); `using` 0.29 s patched, 0.22 s stock. TraitWorld itself: 30 s and 38 MB patched, 23 s and 28 MB stock; `using` 0.13–0.14 s |
 
 **Success:**
 - rows 4 and 5 improve by an order of magnitude;
