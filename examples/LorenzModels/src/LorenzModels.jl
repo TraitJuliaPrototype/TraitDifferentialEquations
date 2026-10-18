@@ -5,8 +5,17 @@ A user package of route A: a model and two callbacks written as trait-world code
 to TraitDifferentialEquations' traits `ODEModel` and `Callback`. The solver is compiled for
 these types in this package's image (the workload below); the user's session compiles nothing
 for them. The same package without traits is `baselines/PlainLorenzModels`.
+
+A package is an ordinary module around its trait module (`Models`): `@trait_module` is not in
+scope at a package's top level, before `using TraitWorld`.
 """
-@trait_module module LorenzModels
+module LorenzModels
+using TraitWorld
+using TraitDifferentialEquations
+export Lorenz, Bounce, RaiseSigma
+
+"The models and callbacks, as trait-world code."
+@trait_module module Models
 using TraitWorld
 using TraitDifferentialEquations
 import TraitDifferentialEquations: rhs!, jacobian!, condition, affect!
@@ -80,6 +89,9 @@ function affect!(cb::RaiseSigma, integ::Dynamic{IntegratorView})
     return nothing
 end
 @implement Callback RaiseSigma
+
+end
+using .Models
 
 TraitWorld.@workload begin
     u0 = [1.0, 0.0, 0.0]

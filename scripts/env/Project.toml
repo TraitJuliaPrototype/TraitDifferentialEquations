@@ -1,10 +1,14 @@
 [deps]
 PlainODE = "2ab8b7f6-06b2-45d2-a1d8-2b0547764a6c"
+PlainLorenzModels = "9b2e6f40-1c7d-4a58-8e3f-6d0a4b7c2e91"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LorenzModels = "5d1b7c3e-8a40-4f2e-9b61-3c7e2a9f0d14"
 TraitDifferentialEquations = "fc9886c1-0241-47c4-acfc-eaf7404dec9a"
 TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
 
 [sources]
 PlainODE = {path = "../../baselines/PlainODE"}
+PlainLorenzModels = {path = "../../baselines/PlainLorenzModels"}
+LorenzModels = {path = "../../examples/LorenzModels"}
 TraitDifferentialEquations = {path = "../.."}
 TraitWorld = {path = "../../../TraitWorld"}

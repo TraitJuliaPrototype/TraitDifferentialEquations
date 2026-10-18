@@ -91,9 +91,10 @@ _solve_fm(m::FunctionModel{P,T}, u0::Vector{T}, tspan, alg, p::P, cbs, opts) whe
 struct Sig{A,S} end
 
 "Whether a value's type holds a dual number anywhere: a closure that captured an outer level's duals."
-_holds_duals(@nospecialize(T)) = T <: ForwardDiff.Dual ||
+_holds_duals(@nospecialize(T::Type)) = T <: ForwardDiff.Dual ||
+    (T isa Union && any(_holds_duals, Base.uniontypes(T))) ||
     (T isa DataType && (any(_holds_duals, T.parameters) || (!isabstracttype(T) && any(_holds_duals, fieldtypes(T)))))
-_holds_duals(@nospecialize(T::TypeVar)) = false
+_holds_duals(@nospecialize(x)) = false                  # a type variable, or a parameter that is a value (`1` in `Array{T, 1}`)
 
 """
     gradient(loss, p::Vector{Float64}) -> Vector{Float64}

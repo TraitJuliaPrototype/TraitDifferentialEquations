@@ -1,0 +1,14 @@
+name = "PlainLorenzModels"
+uuid = "9b2e6f40-1c7d-4a58-8e3f-6d0a4b7c2e91"
+version = "0.0.1"
+authors = ["Frank Hellmann"]
+
+[deps]
+PlainODE = "2ab8b7f6-06b2-45d2-a1d8-2b0547764a6c"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+
+[sources]
+PlainODE = {path = "../PlainODE"}
+
+[compat]
+julia = "1.13"

@@ -87,6 +87,10 @@ end
     # nested: a loss that captures an outer level's duals gets ForwardDiff's own tag (session 23's hazard)
     @test TraitDifferentialEquations._holds_duals(typeof(let d = ForwardDiff.Dual(1.0, 1.0); p -> d * p[1]; end))
     @test !TraitDifferentialEquations._holds_duals(typeof(loss2))
+    # a loss that captures a vector (a type parameter that is a value, `Array{Float64, 1}`)
+    u0 = copy(U0)
+    @test !TraitDifferentialEquations._holds_duals(typeof(p -> sum(u0) * p[1]))
+    @test gradient(p -> sum(solve(ODEProblem(lorenz!, u0, (0.0, 1.0), p), Tsit5(); abstol = 1e-10, reltol = 1e-10).u[end]), copy(P0)) == g
     outer(a) = gradient(p -> a[1] * p[1]^2, [3.0])[1]                 # d/da (2 a p) at p = 3: 6
     @test ForwardDiff.derivative(x -> outer([x]), 1.0) ≈ 6.0
     # callbacks need Float64 states
