@@ -17,7 +17,7 @@ import ForwardDiff
 include("ODECore.jl")
 using .ODECore
 using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback,
-                solve_ode, SolverOptions, FDual
+                solve_ode, solve_rhs, SolverOptions, FDual
 export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEModel, rhs!, jacobian!, Callback, condition,
        affect!, IntegratorView
 
@@ -48,15 +48,23 @@ _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat
 """
     solve(prob::ODEProblem, Tsit5(); callback = nothing, saveat = [], abstol, reltol)
 
-The plain function becomes a dynamic call at `(Vector{Float64}, Vector{Float64}, P, Float64)`:
-the solver's code is compiled once per parameter type `P`, never per function.
+The plain function enters at its declared signature `(Vector{T}, Vector{T}, P, Float64) -> Nothing`.
+By default it is a dynamic call: the solver's code is compiled once per parameter type `P`, never
+per function. `ODEProblem(compiled_call(f), …)` asks for the compiled mode: the solver is compiled
+for `f`, with `f` inferred into it, and the signature still checked at every call. The compiled
+mode is served for `Float64` states with `Vector{Float64}` or no parameters (`ODECore.solve_rhs`);
+elsewhere (`Float32` states, gradients, Rodas5) the function runs as a dynamic call, with the same results.
 """
 function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, kw...)
     # not specialized on the function's type: only the function itself is compiled, at its signature
     u0 = _promote_state(prob.u0, prob.p)
-    return _solve_fm(_function_model(prob.f, prob.p, u0), u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
+    return _solve_rhs(prob.f, u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
 end
-_function_model(@nospecialize(f), p::P, ::Vector{T}) where {P,T} = FunctionModel{P,T}(dynamic_fn(RHSSig{P,T}, Nothing, f), p)
+_solve_rhs(@nospecialize(f), u0::Vector{Float64}, tspan, alg::Tsit5, p::Union{Nothing,Vector{Float64}}, cbs, opts) =
+    solve_rhs(f, u0, tspan, alg, p, cbs, opts)
+_solve_rhs(@nospecialize(f), u0, tspan, alg, p, cbs, opts) = _solve_fm(_function_model(f, p, u0), u0, tspan, alg, p, cbs, opts)
+_function_model(@nospecialize(f), p::P, ::Vector{T}) where {P,T} =
+    FunctionModel{P,T,DynamicFn{RHSSig{P,T},Nothing}}(dynamic_fn(RHSSig{P,T}, Nothing, f), p)
 "The state at the parameters' dual type, as SciML promotes `u0` for a gradient in `p`."
 _promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
 _promote_state(u0::Vector, p) = u0
@@ -113,13 +121,16 @@ function _gradient_sig(@nospecialize(loss), p::Vector{Float64}, ::Val{N}) where 
 end
 
 """
-    solve(model, u0, tspan, Tsit5(); p = nothing, callback = nothing, kw...)
+    solve(model, u0, tspan, Tsit5(); p = model, callback = nothing, kw...)
 
-A model of a type that conforms to `ODEModel` (it implements `rhs!` itself): the solver's
-code is compiled for that type, in the conformer's image or the session.
+A model of a type that conforms to `ODEModel{T}` (it implements `rhs!` itself, route A): the
+solver's code is compiled for that type, in the conformer's image or the session. The state keeps
+`u0`'s element type, which must be the model's `T`: a model of dual numbers (under `gradient`)
+takes a dual state, `eltype(p).(u0)`. Callbacks see `p` as `integ.p`, the model itself by default.
+Rodas5 takes `Float64` states and the model's `jacobian!` (finite differences by default).
 """
-solve(model, u0::AbstractVector, tspan, alg::Union{Tsit5,Rodas5}; p = nothing, callback = nothing, kw...) =
-    solve_ode(model, Vector{Float64}(u0), (Float64(tspan[1]), Float64(tspan[2])), alg, p, _kept(callback), _options(; kw...))
+solve(model, u0::AbstractVector, tspan, alg::Union{Tsit5,Rodas5}; p = model, callback = nothing, kw...) =
+    solve_ode(model, _state(u0), (Float64(tspan[1]), Float64(tspan[2])), alg, p, _kept(callback), _options(; kw...))
 
 # The precompile workload: the solver for plain functions with `Vector{Float64}` and no parameters,
 # with and without callbacks. Any other function of these signatures runs this code: only the

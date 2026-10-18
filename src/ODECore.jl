@@ -11,7 +11,7 @@ using TraitWorld
 using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
 export ODEModel, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
+       solve_ode, solve_rhs, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -68,18 +68,19 @@ const RHSSig{P,T} = Tuple{Vector{T},Vector{T},P,Float64}
 const CondSig = Tuple{Vector{Float64},Float64,Dynamic{IntegratorView}}
 const AffectSig = Tuple{Dynamic{IntegratorView}}
 
-"A plain function as a model: a dynamic call at the declared signature, and the parameters."
-struct FunctionModel{P,T}
-    f::DynamicFn{RHSSig{P,T},Nothing}
+"""
+A plain function as a model: the function at its declared signature `RHSSig{P, T}`, as its
+`Callable` bound gave it (`F`), and the parameters. In `DynamicCall` mode `F` is a `DynamicFn`,
+the same type for every function, so the solver compiles once per `(P, T)`; in `CompiledCall`
+mode `F` names the function, so the solver compiles per function, with the function inferred
+into it, and the signature still checked at every call.
+"""
+struct FunctionModel{P,T,F}
+    f::F
     p::P
 end
 rhs!(m::FunctionModel{P,T}, du::Vector{T}, u::Vector{T}, t::Float64) where {P,T} = (m.f(du, u, m.p, t); nothing)
-@implement ODEModel{T} FunctionModel{P,T} where {P,T}
-
-"The value a step-size controller sees: a dual number's primal value, so that gradients follow the primal's steps."
-primal(x::Float64) = x
-primal(x::AbstractFloat) = Float64(x)
-primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
+@implement ODEModel{T} FunctionModel{P,T,F} where {P,T,F}
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
 # (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
@@ -341,6 +342,28 @@ function solve_ode(m::ODEModel, u0::Vector{T}, tspan::Tuple{Float64,Float64}, al
     i.terminated && (retcode = :Terminated)
     return ODESolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
 end
+
+
+"""
+    solve_rhs(f, u0, tspan, Tsit5(), p, callbacks, opts) -> ODESolution
+
+Tsit5 for a plain right-hand side `f(du, u, p, t)`, which enters at its declared signature
+`Callable{RHSSig{P, Float64}, Nothing}`. The bound leaves the mode to the caller: `DynamicCall`
+by default (the solver compiled once per `P`), `CompiledCall` for `compiled_call(f)` (the solver
+compiled for `f`). One method per parameter type the library serves this way: a `Callable`
+bound's signature is a constant.
+"""
+solve_rhs(f::Callable{RHSSig{Vector{Float64},Float64},Nothing}, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
+          alg::Tsit5, p::Vector{Float64}, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
+    solve_ode(FunctionModel{Vector{Float64},Float64,typeof(f)}(f, p), u0, tspan, alg, p, callbacks, opts)
+solve_rhs(f::Callable{RHSSig{Nothing,Float64},Nothing}, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
+          alg::Tsit5, p::Nothing, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
+    solve_ode(FunctionModel{Nothing,Float64,typeof(f)}(f, p), u0, tspan, alg, p, callbacks, opts)
+
+"The value a step-size controller sees: a dual number's primal value, so that gradients follow the primal's steps."
+primal(x::Float64) = x
+primal(x::AbstractFloat) = Float64(x)
+primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
 
 
 # --- Rodas5 (tableau from OrdinaryDiffEqRosenbrockTableaus 2.0.0; Di Marzo 1993) --------------------

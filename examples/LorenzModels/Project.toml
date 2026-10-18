@@ -1,0 +1,15 @@
+name = "LorenzModels"
+uuid = "5d1b7c3e-8a40-4f2e-9b61-3c7e2a9f0d14"
+version = "0.0.1"
+authors = ["Frank Hellmann"]
+
+[deps]
+TraitDifferentialEquations = "fc9886c1-0241-47c4-acfc-eaf7404dec9a"
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+TraitDifferentialEquations = {path = "../.."}
+TraitWorld = {path = "../../../TraitWorld"}
+
+[compat]
+julia = "1.13"

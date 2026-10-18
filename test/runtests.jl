@@ -8,12 +8,12 @@ const U0 = [1.0, 0.0, 0.0]
 const REF = [-9.408450567056128, -9.096199071186515, 28.581627624392613]
 
 # a model as trait-world code: the type implements `rhs!` (route A, compiled for the type)
-struct Lorenz
+struct Lorenz3
     σ::Float64; ρ::Float64; β::Float64
 end
-TraitDifferentialEquations.rhs!(m::Lorenz, du::Vector{Float64}, u::Vector{Float64}, t::Float64) =
+TraitDifferentialEquations.rhs!(m::Lorenz3, du::Vector{Float64}, u::Vector{Float64}, t::Float64) =
     (du[1] = m.σ * (u[2] - u[1]); du[2] = u[1] * (m.ρ - u[3]) - u[2]; du[3] = u[1] * u[2] - m.β * u[3]; nothing)
-@implement ODEModel{Float64} Lorenz
+@implement ODEModel{Float64} Lorenz3
 
 @testset "TraitDifferentialEquations: Tsit5" begin
     prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
@@ -25,7 +25,7 @@ TraitDifferentialEquations.rhs!(m::Lorenz, du::Vector{Float64}, u::Vector{Float6
     s2 = solve(prob, Tsit5(); saveat = 0.0:0.25:1.0)
     @test s2.t == collect(0.0:0.25:1.0) && isapprox(s2.u[end], s.u[end]; rtol = 1e-8)
     # route A: the same model as a type that implements rhs!
-    sA = solve(Lorenz(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Tsit5(); abstol = 1e-12, reltol = 1e-12)
+    sA = solve(Lorenz3(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Tsit5(); abstol = 1e-12, reltol = 1e-12)
     @test isapprox(sA.u[end], REF; rtol = 1e-10)
     # a parameter-free problem
     s0 = solve(ODEProblem((du, u, p, t) -> (du .= -u; nothing), [1.0], (0.0, 1.0)), Tsit5(); abstol = 1e-10, reltol = 1e-10)
@@ -68,7 +68,7 @@ end
     sr = solve(ODEProblem(rober!, [1.0, 0.0, 0.0], (0.0, 1e5)), Rodas5(); abstol = 1e-8, reltol = 1e-6)
     @test sr.retcode === :Success && isapprox(sum(sr.u[end]), 1.0; atol = 1e-10) && isapprox(sr.u[end][1], 0.0178; atol = 1e-3)
     # a model type: its Jacobian by the default (finite differences)
-    sA = solve(Lorenz(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
+    sA = solve(Lorenz3(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
     @test isapprox(sA.u[end], REF; rtol = 1e-7)
 end
 
@@ -102,3 +102,6 @@ end
     @test isapprox(Float64.(s.u[end]), s64.u[end]; rtol = 1e-2)
 end
 
+
+include("routea.jl")
+include("compiledcall.jl")
