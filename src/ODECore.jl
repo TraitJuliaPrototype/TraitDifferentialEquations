@@ -1,6 +1,6 @@
 # ODECore: the trait module. The model, callbacks and the integrator as callbacks see it are
 # traits; the solvers' code is compiled for what these bounds can see (note "Keys"):
-#   - a model that implements `rhs!` itself is the implementing type, so the driver compiles
+#   - a model that implements `rhs!` itself is the receiver type, so the driver compiles
 #     per model type ("route A", the comparison);
 #   - a plain function is stored as a `DynamicFn` in the library's `FunctionModel{P}`, so the
 #     driver compiles once per parameter type P, whatever the function (the default route);
@@ -44,7 +44,7 @@ end
 
 """
 What a callback sees of the integrator: the state (its contents writable), the time, the
-parameters, and two flags. Fields only, so there is no implementing type: the key is the
+parameters, and two flags. Fields only, so there is no receiver type: the key is the
 fields' types, `T` and `P` defined by matching them.
 """
 @trait IntegratorView{T, P} begin
