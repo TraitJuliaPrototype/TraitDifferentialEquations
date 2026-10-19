@@ -81,7 +81,7 @@ end
         @implement ODEModel{Float64} NoRhs
     end)
     @test e isa TraitWorld.ImplementError
-    @test_broken occursin("rhs!", errtext(e))          # TraitWorld: the message names no operation (see README)
+    @test occursin("rhs!", errtext(e))          # TraitWorld: the message names no operation (see README)
     # (b') one operation implemented, the required one missing: refused, naming it
     e = thrown(quote
         struct OnlyJac; k::Float64; end
@@ -112,7 +112,7 @@ end
         @implement ODEModel{Float64} BadArg
     end)
     @test e isa TraitWorld.ImplementError
-    @test_broken occursin("Vector{Float32}", errtext(e))  # TraitWorld: says "no methods for its operations"
+    @test occursin("Vector{Float32}", errtext(e))  # TraitWorld: says "no methods for its operations"
     # (a) a Float64 cache in a model generic in T: the family conformance is checked at each
     # member's first use, but inference does not prove `Float64(::Dual)` fails inside broadcasting,
     # so the mistake passes the check and surfaces at run time, in Base's broadcasting frames
