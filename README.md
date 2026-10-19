@@ -2,9 +2,15 @@
 
 ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
 
-Status (session 30, 2026-10-18): **every row that needs no measuring is built; correctness first, no timing.** New: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…, CompiledCall}`, the user's mistakes at the conformance (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 30)" below. **Every number in "Measurements" predates parts (B), (C) and (D) of the compiler; rows waiting for (D) are listed in "To measure after (D)".** Tests run with `JULIA_TW_VIEWCACHE=0` and, until the rebuilt Julia is validated, `JULIA_TW_COMPILER_FACTS=0`.
+Status (session 29, 2026-10-19): **built on the facts+traits compiler and measured.**
+- Runs on julia-1.13 61852d8fb1 with TraitWorld 375a930: Julia's compiler compiles the trait modules by facts, and `Dynamic` operations are call-site splits (part D).
+- The test suite passes there. The scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library.
+- Measured in session 29: "Measured in session 29" below. The design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3 has the same numbers, with the build and the caveats.
+- Not measured yet: PlainODE as the control, route A, compiled mode, and the rest listed below.
+- Built in session 29, correctness first: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…, CompiledCall}`, the user's mistakes at the conformance (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 29)" below.
+- The numbers of sessions 23–27 are under "History (before the facts compiler)". They predate parts (B), (C) and (D) of the compiler.
 
-Earlier (session 27): steps 1, 3 and 4 done. Step 4 adds gradients through Tsit5: the solver is generic in the element type (the step-size control reads primal values, so a gradient follows the primal solve's steps), `u0` is promoted to the parameters' duals as SciML does, and `gradient(loss, p)` tags the duals by the loss's primal signature (`Tag{Sig{Tuple{Vector{Float64}}, Float64}, Float64}`), with the loss as a dynamic call. Rows 1–5 measured then on the patched build (see the table). Steps 1 and 3 (sessions 23–24): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, and Rodas5 with ForwardDiff's own `Dual` under the library's tag.
+Earlier (session 27): steps 1, 3 and 4 done. Step 4 adds gradients through Tsit5: the solver is generic in the element type (the step-size control reads primal values, so a gradient follows the primal solve's steps), `u0` is promoted to the parameters' duals as SciML does, and `gradient(loss, p)` tags the duals by the loss's primal signature (`Tag{Sig{Tuple{Vector{Float64}}, Float64}, Float64}`), with the loss as a dynamic call. Rows 1–5 measured then on the patched build (see the table under "History (before the facts compiler)"). Steps 1 and 3 (sessions 23–24): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, and Rodas5 with ForwardDiff's own `Dual` under the library's tag.
 
 **How it is built (keys):**
 - `ODEModel{T}`: `rhs!(m, du, u, t)`, `jacobian!(m, J, u, t)` (default: finite differences).
@@ -41,9 +47,123 @@ SciML today recompiles the solver for every new callback closure (0.84–0.96 s 
 
 **Baselines:**
 - **(a) stock SciML:** OrdinaryDiffEqTsit5, OrdinaryDiffEqRosenbrock and ForwardDiff;
-- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `compiled_call`, model types and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 30 it has every feature of the trait form, so each later measurement has its control.
+- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `compiled_call`, model types and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
 
 ## Measurements
+
+The rows (1–13) are defined in the table under "History (before the facts compiler)", with the numbers of sessions 23–27. The session-29 numbers are in "Measured in session 29".
+
+**Success:**
+- rows 4 and 5 improve by an order of magnitude;
+- row 7 stays at zero policy CodeInstances lost;
+- row 9 is caught early for models written as trait-world code;
+- row 11 stays within its bounds;
+- row 12 runs.
+
+## Correctness (session 29)
+
+No timings: these rows say what happens, not how fast. Tests: `test/routea.jl`, `test/compiledcall.jl`; frames and lines from a message printed with its backtrace, harness frames included.
+
+**Route A: the user's mistakes at the conformance** (review example 5):
+
+| Mistake | Where caught | What the user sees |
+|---|---|---|
+| (b) no `rhs!` at all | at `@implement` | `ImplementError: no field of NoRhs conforms to ODEModel and NoRhs has no methods for its operations (fields: k::Float64); name a field `data`, write `project(t) = …`, or implement the operations`. Names neither `rhs!` nor its signature, and suggests projections, which are gone (TraitWorld issue) |
+| (b′) `jacobian!` but no `rhs!` | at `@implement` | `OnlyJac has methods for some operations of ODEModel but not for rhs!: define them, …`. Names the operation, not its signature |
+| (c) `rhs!` returns `du` (`du .= …` last) | at `@implement`, also in the block form | `` `rhs!` at Tuple{BadRet, Vector{Float64}, Vector{Float64}, Float64} returns `Vector{Float64}`, declared `Nothing` ``: the cause and the fix, 3 lines before the frames |
+| (c′) `u::Vector{Float32}` in `rhs!` | at `@implement` | the message of (b): does not name the existing method or the declared signature (TraitWorld issue) |
+| (a) a `Float64` buffer in `Lorenz{T}`, under `gradient` | **at run time**: the family member's check at first use passes | `MethodError: no method matching Float64(::Dual{…})`, 69 lines, 28 frames, longest line 685, 12 of the frames Base's broadcasting. Inference does not prove the conversion fails, so no conformance check sees it. The outcome against that the review named |
+| a dual model with a `Float64` state (the loss forgot `eltype(p).(u0)`) | at the first operation call | `TraitArgumentError: operation rhs! of trait ODEModel at representation Lorenz{Dual…} is declared for arguments …, got …`, 34 lines, 16 frames |
+
+Since TraitWorld 3ba6c05, the messages of (b) and (c′) name `rhs!` and the declared argument types; the two tests that were broken pass (TraitDifferentialEquations 62e9fa4).
+
+**A right-hand side with a declared signature, in both modes** (review example 10):
+
+| Case | `DynamicCall` (default) | `CompiledCall` (`compiled_call(f)`) |
+|---|---|---|
+| Lorenz, saved states | identical (`==`) | identical |
+| out of place, `f(u, p, t)` | `MethodError` for the declared arguments at the first call, 15 frames | first a warning at the model's first use (`rhs!` … always throws (inferred `Union{}`): a fallback, not an implementation), then the same `MethodError` |
+| returns `du` | `TypeError: expected Nothing` at the first call | warning, then the same `TypeError` |
+| an explicit wrapper for another signature, `Callable{Tuple{Vector{Float64}}, Nothing, CompiledCall}(f)` | `TraitBoundError` at the entry, before the solve, naming both signatures | the same |
+| `Float32` state, Rodas5, gradient | — | no compiled entry: runs dynamic, identical values |
+| a function redefined at the prompt | the next solve uses the new definition | the same (the compiled solver is recompiled: the function's owner changed a fact) |
+
+Wanted from TraitWorld: refuse a function without a method at `A`, or with a result disjoint from `S`, at the entry in both modes (a `@test_broken` in `test/compiledcall.jl`).
+
+**The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 10 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
+
+**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `compiled_call` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the conformance.
+
+## Measured in session 29
+
+From [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: julia-1.13 61852d8fb1, TraitWorld 375a930, the patched build. `scripts/rows.jl`, fresh processes, *n = 1* per load order; big loads = CSV, DataFrames, CairoMakie. One machine, shared with other jobs.
+
+| Row | No loads | Loads before | Loads after |
+|---|---|---|---|
+| `using TraitDifferentialEquations` | 0.47 s | 7.28 s (one run; 1.29–1.39 s in other runs: a cache rebuilt once, stacked environments) | 0.47 s |
+| first Tsit5 solve, a plain function | 10.0 ms | 27.8 ms | 9.9 ms |
+| a second model function | 9.8 ms | 11.2 ms | 27.6 ms |
+| a new model type: `@implement` / first solve | 142 / 82 ms | 164 / 133 ms | 149 / 89 ms |
+| first Rodas5 solve | 16.6 ms | 17.0 ms | 16.8 ms |
+| a new callback closure / a second | 12.4 / 5.2 ms | 24.0 / 5.4 ms | **170.7** / 5.2 ms |
+| first gradient / second loss / third loss | 29 / 17 / 62 ms | 34 / 18 / 63 ms | 34 / 17 / 62 ms |
+| ForwardDiff's own tag, for comparison | 0.70 s | 0.73 s | 0.72 s |
+| a `Float32` state, first solve | 0.46 s | 0.45 s | 0.45 s |
+
+- At the start of the phase: a new model type after the loads took 2.0 s and 2.1 s.
+- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms. The first solve is not back at 33–44 ms yet.
+- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without (24 ms in an earlier run): not diagnosed.
+- The first Tsit5 solve here is a plain function's, not route A's precompiled package (row 1 of the plan).
+
+**Run time per solver step** (row 11; `scripts/runtime.jl`):
+
+| What | Trait form | Baseline | Notes |
+|---|---|---|---|
+| Lorenz (n = 3) | model type 158–160 ns; plain function 190–199 | OrdinaryDiffEq 338–355 ns | |
+| a diffusion chain (n = 1,000) | 7.5–7.9 µs | OrdinaryDiffEq 6.1 µs | OrdinaryDiffEq's stage loops are fused with `@muladd` |
+
+**Not measured yet** (each with PlainODE as the control; in fresh sessions and at a REPL; with the plain baseline under `--compile-by-facts=all`):
+- PlainODE on every row: no PlainODE numbers were taken in session 29, so the session-29 table has no plain control.
+- The control under `all` (row 7): compiled code lost per load. Session 29 timed the rows in three load orders but did not count lost CodeInstances.
+- Any row at a real REPL: the rows above ran in fresh processes.
+- **Row 1 for route A:** the first solve of `LorenzModels.Lorenz` from its image (the plan's "precompiled user package"), against `PlainLorenzModels`.
+- **Row 4 for callback types:** a new callback type at the prompt, against a new closure.
+- **Example 10, `CompiledCall`:** run time per step at n = 3 and n = 1,000 against `DynamicCall` and the model type (row 11's columns); compile time for a second function in compiled mode; what the image holds.
+- **Row 5 for route A:** first gradient and a second loss through `Lorenz{Dual}`.
+- **Row 6** from an image that holds the key (the per-session cost, 0.45–0.46 s, is above).
+- **Row 9 for route A:** the correctness table below in lines, frames and longest line, beside SciML's.
+- **Row 11 with callback types:** the cost of `Dynamic{Callback}` per step for `Bounce`, against a closure and against PlainODE's `Vector{Any}`.
+- **The session:** the time per entry of `scripts/session.jl`, both libraries, at a real REPL.
+- **Rodas5 in PlainODE:** row 3's control.
+- Row 8's strict half and row 12 (the trimmed binary) are not built: strict mode and builds were outside this task.
+- Row 13 (precompile time, image sizes, image load time) on the current build.
+
+## Order of work
+
+1. Tsit5 with a trait-world model, the driver, and rows 1, 2, 4, 7, 10.
+2. The function route and the compatibility layer.
+3. Rodas5 with automatic differentiation (rows 3, 9).
+4. *(Done, session 27.)* Tag erasure (row 5).
+5. *(Session 29.)* Route A as a user package, `CompiledCall`, the conformance errors, the session, PlainODE complete.
+6. The trimmed binary (row 12).
+
+**Prerequisites in TraitWorld:**
+- `Dynamic{X}`;
+- lenses and trait fields (properties);
+- associated types (`StateVector{T}` families);
+- constructor operations and the conformance's inverse;
+- definition checking with parameter archetypes;
+- the dynamic model mode, pinned per integrator: superseded by keys (the function route is the dynamic mode; a model type is compiled for its key);
+- bounds that name an associated type (`m::ODEModel{T} where T`) and `Callable` signatures over a method's static parameters: not supported yet (see Correctness).
+
+**Running on the shared machine:** one Julia job at a time, niced, with full image builds under a memory guard.
+
+
+## History (before the facts compiler)
+
+The measurements of sessions 23–27, under TraitWorld's prototype policy, unchanged.
+
+### Measurements (sessions 23–27)
 
 Each in fresh sessions; the stock numbers are from `../experiments/solvers/`. The millisecond predictions are for the patched build: on stock Julia, package images keep no native code for the facts policy's code, so each session compiles it again (piece 5 of `../writeup/explorations/julia-support.md`). Session 26 numbers come from `scripts/rows.jl`, one fresh process per cell, with CSV, DataFrames and CairoMakie loaded before, after or not at all. They are single runs. Rows still marked *remeasure* predate wrapping by facts.
 
@@ -78,78 +198,3 @@ Each in fresh sessions; the stock numbers are from `../experiments/solvers/`. Th
 - **What discipline alone gives:** PlainODE (FunctionWrappers, untyped callbacks, the same signature-labelled tag) matches the trait form on rows 2 and 5 in a fresh session, and is faster to load and for a first callback.
 - **What the trait form adds:** no load order changes its numbers (row 1 after the loads: 6.5 against 54 ms; a first callback after them: 29 against 144 ms), and its code is checked where it is defined.
 - **What it costs:** loading TraitWorld (0.17 s more) and about 12 ms more for a session's first callback: the user's closures see the integrator as a `Dynamic{IntegratorView}`, so their field accesses dispatch, and each closure's pointer wrapper is compiled (about 5 ms per closure, as a FunctionWrapper's would be).
-
-**Success:**
-- rows 4 and 5 improve by an order of magnitude;
-- row 7 stays at zero policy CodeInstances lost;
-- row 9 is caught early for models written as trait-world code;
-- row 11 stays within its bounds;
-- row 12 runs.
-
-## Correctness (session 30)
-
-No timings: these rows say what happens, not how fast. Tests: `test/routea.jl`, `test/compiledcall.jl`; frames and lines from a message printed with its backtrace, harness frames included.
-
-**Route A: the user's mistakes at the conformance** (review example 5):
-
-| Mistake | Where caught | What the user sees |
-|---|---|---|
-| (b) no `rhs!` at all | at `@implement` | `ImplementError: no field of NoRhs conforms to ODEModel and NoRhs has no methods for its operations (fields: k::Float64); name a field `data`, write `project(t) = …`, or implement the operations`. Names neither `rhs!` nor its signature, and suggests projections, which are gone (TraitWorld issue) |
-| (b′) `jacobian!` but no `rhs!` | at `@implement` | `OnlyJac has methods for some operations of ODEModel but not for rhs!: define them, …`. Names the operation, not its signature |
-| (c) `rhs!` returns `du` (`du .= …` last) | at `@implement`, also in the block form | `` `rhs!` at Tuple{BadRet, Vector{Float64}, Vector{Float64}, Float64} returns `Vector{Float64}`, declared `Nothing` ``: the cause and the fix, 3 lines before the frames |
-| (c′) `u::Vector{Float32}` in `rhs!` | at `@implement` | the message of (b): does not name the existing method or the declared signature (TraitWorld issue) |
-| (a) a `Float64` buffer in `Lorenz{T}`, under `gradient` | **at run time**: the family member's check at first use passes | `MethodError: no method matching Float64(::Dual{…})`, 69 lines, 28 frames, longest line 685, 12 of the frames Base's broadcasting. Inference does not prove the conversion fails, so no conformance check sees it. The outcome against that the review named |
-| a dual model with a `Float64` state (the loss forgot `eltype(p).(u0)`) | at the first operation call | `TraitArgumentError: operation rhs! of trait ODEModel at representation Lorenz{Dual…} is declared for arguments …, got …`, 34 lines, 16 frames |
-
-**A right-hand side with a declared signature, in both modes** (review example 10):
-
-| Case | `DynamicCall` (default) | `CompiledCall` (`compiled_call(f)`) |
-|---|---|---|
-| Lorenz, saved states | identical (`==`) | identical |
-| out of place, `f(u, p, t)` | `MethodError` for the declared arguments at the first call, 15 frames | first a warning at the model's first use (`rhs!` … always throws (inferred `Union{}`): a fallback, not an implementation), then the same `MethodError` |
-| returns `du` | `TypeError: expected Nothing` at the first call | warning, then the same `TypeError` |
-| an explicit wrapper for another signature, `Callable{Tuple{Vector{Float64}}, Nothing, CompiledCall}(f)` | `TraitBoundError` at the entry, before the solve, naming both signatures | the same |
-| `Float32` state, Rodas5, gradient | — | no compiled entry: runs dynamic, identical values |
-| a function redefined at the prompt | the next solve uses the new definition | the same (the compiled solver is recompiled: the function's owner changed a fact) |
-
-Wanted from TraitWorld: refuse a function without a method at `A`, or with a result disjoint from `S`, at the entry in both modes (a `@test_broken` in `test/compiledcall.jl`).
-
-**The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 10 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
-
-**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `compiled_call` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the conformance.
-
-## To measure after (D)
-
-Each with PlainODE as the control, in fresh sessions and at a REPL, under `--compile-by-facts=traits` and with the plain baseline under `all`:
-- **Rows 1–5 and 7** again: the session-27 numbers predate (B), (C) and (D).
-- **Row 1 for route A:** the first solve of `LorenzModels.Lorenz` from its image (the plan's "precompiled user package"), against `PlainLorenzModels`.
-- **Row 2:** a new model type at the prompt: `@implement` and first solve.
-- **Row 4 for callback types:** a new callback type at the prompt, against a new closure.
-- **Example 10, `CompiledCall`:** run time per step at n = 3 and n = 1,000 against `DynamicCall` and the model type (row 11's columns); compile time for a second function in compiled mode; what the image holds.
-- **Row 5 for route A:** first gradient and a second loss through `Lorenz{Dual}`.
-- **Row 6:** `Float32` without the view cache (now deleted): per session, or from an image that holds the key.
-- **Row 9 for route A:** the table above in lines, frames and longest line, beside SciML's.
-- **Row 11 with callback types:** the cost of `Dynamic{Callback}` per step for `Bounce`, against a closure and against PlainODE's `Vector{Any}`.
-- **The session:** the time per entry of `scripts/session.jl`, both libraries, at a real REPL.
-- **Rodas5 in PlainODE:** row 3's control (new in session 30).
-- Row 8's strict half and row 12 (the trimmed binary) are not built: strict mode and builds are outside this task.
-
-## Order of work
-
-1. Tsit5 with a trait-world model, the driver, and rows 1, 2, 4, 7, 10.
-2. The function route and the compatibility layer.
-3. Rodas5 with automatic differentiation (rows 3, 9).
-4. *(Done, session 27.)* Tag erasure (row 5).
-5. *(Session 30.)* Route A as a user package, `CompiledCall`, the conformance errors, the session, PlainODE complete.
-6. The trimmed binary (row 12).
-
-**Prerequisites in TraitWorld:**
-- `Dynamic{X}`;
-- lenses and trait fields (properties);
-- associated types (`StateVector{T}` families);
-- constructor operations and the conformance's inverse;
-- definition checking with parameter archetypes;
-- the dynamic model mode, pinned per integrator: superseded by keys (the function route is the dynamic mode; a model type is compiled for its key);
-- bounds that name an associated type (`m::ODEModel{T} where T`) and `Callable` signatures over a method's static parameters: not supported yet (see Correctness).
-
-**Running on the shared machine:** one Julia job at a time, niced, with full image builds under a memory guard.
