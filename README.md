@@ -122,7 +122,7 @@ From [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: j
 | Lorenz (n = 3) | model type 158–160 ns; plain function 190–199 | OrdinaryDiffEq 338–355 ns | |
 | a diffusion chain (n = 1,000) | 7.5–7.9 µs | OrdinaryDiffEq 6.1 µs | OrdinaryDiffEq's stage loops are fused with `@muladd` |
 
-**Not measured yet** (each with PlainODE as the control; in fresh sessions and at a REPL; with the plain baseline under `--compile-by-facts=all`):
+**Not measured yet** (each with PlainODE as the control; in fresh sessions and at a REPL; with the plain baseline under `all` (`JULIA_COMPILE_BY_FACTS=1`, or the facts system image)):
 - PlainODE on every row: no PlainODE numbers were taken in session 29, so the session-29 table has no plain control.
 - The control under `all` (row 7): compiled code lost per load. Session 29 timed the rows in three load orders but did not count lost CodeInstances.
 - Any row at a real REPL: the rows above ran in fresh processes.
