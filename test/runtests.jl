@@ -7,13 +7,15 @@ const U0 = [1.0, 0.0, 0.0]
 # u(1) of Lorenz from these values, by stock OrdinaryDiffEq's Tsit5 at abstol = reltol = 1e-12
 const REF = [-9.408450567056128, -9.096199071186515, 28.581627624392613]
 
-# a model as trait-world code: the type implements `rhs!` (route A, compiled for the type)
+# a problem type of its own: it implements `rhs!` (compiled for the type)
 struct Lorenz3
-    σ::Float64; ρ::Float64; β::Float64
+    u0::Vector{Float64}
+    tspan::Tuple{Float64,Float64}
+    p::Vector{Float64}
 end
 TraitDifferentialEquations.rhs!(m::Lorenz3, du::Vector{Float64}, u::Vector{Float64}, t::Float64) =
-    (du[1] = m.σ * (u[2] - u[1]); du[2] = u[1] * (m.ρ - u[3]) - u[2]; du[3] = u[1] * u[2] - m.β * u[3]; nothing)
-@implement ODEModel{Float64} Lorenz3
+    (du[1] = m.p[1] * (u[2] - u[1]); du[2] = u[1] * (m.p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - m.p[3] * u[3]; nothing)
+@implement ODEProblemTrait Lorenz3
 
 @testset "TraitDifferentialEquations: Tsit5" begin
     prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
@@ -24,8 +26,8 @@ TraitDifferentialEquations.rhs!(m::Lorenz3, du::Vector{Float64}, u::Vector{Float
     @test isapprox(s.u[end], REF; rtol = 1e-2) && 20 <= length(s.t) <= 40
     s2 = solve(prob, Tsit5(); saveat = 0.0:0.25:1.0)
     @test s2.t == collect(0.0:0.25:1.0) && isapprox(s2.u[end], s.u[end]; rtol = 1e-8)
-    # route A: the same model as a type that implements rhs!
-    sA = solve(Lorenz3(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Tsit5(); abstol = 1e-12, reltol = 1e-12)
+    # the same system as a problem type that implements rhs!
+    sA = solve(Lorenz3(U0, (0.0, 1.0), P0), Tsit5(); abstol = 1e-12, reltol = 1e-12)
     @test isapprox(sA.u[end], REF; rtol = 1e-10)
     # a parameter-free problem
     s0 = solve(ODEProblem((du, u, p, t) -> (du .= -u; nothing), [1.0], (0.0, 1.0)), Tsit5(); abstol = 1e-10, reltol = 1e-10)
@@ -58,17 +60,20 @@ end
     @test st.retcode === :Success && isapprox(st.u[end], REF; rtol = 1e-9)
     # the library's dual Jacobian equals the analytic one
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
-    m = TraitDifferentialEquations.ODECore.FunctionModelAD{Vector{Float64},3}(
-        Dynamic{Callable{TraitDifferentialEquations.RHSSig{Vector{Float64},Float64},Nothing}}(lorenz!),
-        Dynamic{Callable{TraitDifferentialEquations.DualSig{Vector{Float64},3},Nothing}}(lorenz!), P0)
-    TraitDifferentialEquations.ODECore.jacobian!(m, J, u, 0.0)
+    jacobian!(prob, J, u, 0.0)
     @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
+    # the same through the compiled function, and by finite differences for a stored function of one signature
+    jacobian!(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), J, u, 0.0)
+    @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
+    S = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}
+    jacobian!(ODEProblem(Dynamic{Callable{S,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), J, u, 0.0)
+    @test isapprox(J, [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]; rtol = 1e-6)
     # a stiff problem: Robertson, mass conserved
     rober!(du, u, p, t) = (du[1] = -0.04u[1] + 1e4 * u[2] * u[3]; du[2] = 0.04u[1] - 1e4 * u[2] * u[3] - 3e7 * u[2]^2; du[3] = 3e7 * u[2]^2; nothing)
     sr = solve(ODEProblem(rober!, [1.0, 0.0, 0.0], (0.0, 1e5)), Rodas5(); abstol = 1e-8, reltol = 1e-6)
     @test sr.retcode === :Success && isapprox(sum(sr.u[end]), 1.0; atol = 1e-10) && isapprox(sr.u[end][1], 0.0178; atol = 1e-3)
-    # a model type: its Jacobian by the default (finite differences)
-    sA = solve(Lorenz3(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
+    # a problem type of its own: its Jacobian by the trait's default (finite differences)
+    sA = solve(Lorenz3(U0, (0.0, 1.0), P0), Rodas5(); abstol = 1e-10, reltol = 1e-10)
     @test isapprox(sA.u[end], REF; rtol = 1e-7)
 end
 

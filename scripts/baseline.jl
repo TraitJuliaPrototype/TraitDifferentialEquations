@@ -15,7 +15,7 @@ const U0, P0 = [1.0, 0.0, 0.0], [10.0, 28.0, 8 / 3]
 row("1 first Tsit5 solve", @elapsed P.solve(P.ODEProblem(lorenz!, U0, (0.0, 1.0), P0), P.Tsit5()))
 LOADS == "after" && load_big()
 rossler!(du, u, p, t) = (du[1] = -u[2] - u[3]; du[2] = u[1] + p[1] * u[2]; du[3] = p[2] + u[3] * (u[1] - p[3]); nothing)
-row("2 a second model function", @elapsed P.solve(P.ODEProblem(rossler!, U0, (0.0, 1.0), [0.2, 0.2, 5.7]), P.Tsit5()))
+row("2 a second right-hand side function", @elapsed P.solve(P.ODEProblem(rossler!, U0, (0.0, 1.0), [0.2, 0.2, 5.7]), P.Tsit5()))
 kick = P.DiscreteCallback((u, t, i) -> t > 0.5 && t < 0.6, i -> (i.u[1] += 1.0; nothing))
 row("4 a new callback closure", @elapsed P.solve(P.ODEProblem(lorenz!, U0, (0.0, 1.0), P0), P.Tsit5(); callback = kick))
 stop = P.DiscreteCallback((u, t, i) -> u[1] > 5.0, i -> (i.terminated = true; nothing))

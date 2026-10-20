@@ -3,12 +3,12 @@
 
 ODE solvers written as a trait module (`ODECore`), with an ordinary layer that offers
 SciML's interface: `ODEProblem(f, u0, tspan, p)`, `solve(prob, Tsit5(); callback, saveat)`,
-`DiscreteCallback(condition, affect!)`. The first demonstrator of the trait world's
+`DiscreteCallback(condition, affect!)`. A problem is any type that implements `ODEProblemTrait`;
+TDE's own `ODEProblem` is the canonical one. The first demonstrator of the trait world's
 viability; see README.md for the measurements.
 
 A package pairs a trait module with an ordinary module that uses both (rule 1): this
-module is the ordinary one. It turns plain functions into dynamic calls at the declared
-signatures (the boundary's translation for a `Dynamic` `Callable`) and
+module is the ordinary one. It makes problems from plain functions, keeps callbacks, and
 calls into `ODECore`.
 """
 module TraitDifferentialEquations
@@ -16,23 +16,37 @@ using TraitWorld
 import ForwardDiff
 include("ODECore.jl")
 using .ODECore
-using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback,
-                solve_ode, solve_rhs, SolverOptions, FDual
-export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEModel, rhs!, jacobian!, Callback, condition,
+using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual
+export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!, Callback, condition,
        affect!, IntegratorView
 
-"A problem in SciML's form: `f(du, u, p, t)` in place, an initial state, a time span, parameters."
-struct ODEProblem{F,U,P}
-    f::F
-    u0::Vector{U}
-    tspan::Tuple{Float64,Float64}
-    p::P
+"""
+    ODEProblem(f, u0, tspan, p = nothing)
+
+A problem in SciML's form: `f(du, u, p, t)` in place, an initial state, a time span, parameters.
+The state keeps its element type (`Float32` stays `Float32`), or takes the parameters' dual type
+for a gradient in `p`, as SciML promotes it. The function enters at its declared signature
+`(Vector{T}, Vector{T}, P, Float64) -> Nothing`: `Dynamic` by default (`Callable`'s), so the
+solver's code is compiled once per state and parameter type, never per function;
+`ODEProblem(compiled_for(f), …)` keeps the function itself, so the solver is compiled for it, with
+`f` inferred into it and its result still checked at every call.
+"""
+# neither specialized nor inferred on the function: only the function itself is compiled, at its signature
+Base.@nospecializeinfer ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing) =
+    _problem(f, _promote_state(_state(u0), p), (Float64(tspan[1]), Float64(tspan[2])), p)
+function _problem(@nospecialize(f), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P) where {T,P}
+    r = stored(Callable{RHSSig{P,T},Nothing}, f)
+    # the function as given, for the Jacobian's dual numbers: only where it is kept `Dynamic` from a
+    # plain function (a stored `Dynamic{Callable}` declares one signature; a compiled one is `r` itself)
+    fn = r isa Dynamic && !(f isa Dynamic) ? f : nothing
+    return ODECore.ODEProblem{T,P,typeof(r)}(r, u0, tspan, p, fn)
 end
-ODEProblem(f, u0::AbstractVector, tspan, p = nothing) =
-    ODEProblem(f, _state(u0), (Float64(tspan[1]), Float64(tspan[2])), p)
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)
+"The state at the parameters' dual type, as SciML promotes `u0` for a gradient in `p`."
+_promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
+_promote_state(u0::Vector, p) = u0
 
 "A discrete callback from two plain functions: `condition(u, t, integ)::Bool` and `affect!(integ)`."
 DiscreteCallback(condition, affect!) =
@@ -46,47 +60,20 @@ _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)))
 
 """
-    solve(prob::ODEProblem, Tsit5(); callback = nothing, saveat = [], abstol, reltol)
+    solve(prob, Tsit5(); callback = nothing, saveat = [], abstol, reltol, dtmax, maxiters)
+    solve(prob, Rodas5(); …)
 
-The plain function enters at its declared signature `(Vector{T}, Vector{T}, P, Float64) -> Nothing`.
-By default it is `Dynamic` (`Callable`'s default): the solver's code is compiled once per parameter
-type `P`, never per function. `ODEProblem(compiled_for(f), …)` asks for `Compiled`: the solver is
-compiled for `f`, with `f` inferred into it, and the signature still checked at every call. `Compiled` is served for `Float64` states with `Vector{Float64}` or no parameters (`ODECore.solve_rhs`);
-elsewhere (`Float32` states, gradients, Rodas5) the function runs as a dynamic call, with the same results.
-"""
-function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, kw...)
-    # not specialized on the function's type: only the function itself is compiled, at its signature
-    return Base.inferencebarrier(_solve_tsit5)(prob.f, prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
-end
-# A function barrier: compiled per state and parameter type, so the state's promotion is inferred at
-# concrete types. Inferred inside `solve` at an abstract `p`, its dual branch held edges at abstract
-# dual types, which an unrelated package's ForwardDiff extension invalidated.
-_solve_tsit5(@nospecialize(f), u0::Vector, tspan, alg::Tsit5, p, cbs, opts) =
-    _solve_rhs(f, _promote_state(u0, p), tspan, alg, p, cbs, opts)
-_solve_rhs(@nospecialize(f), u0::Vector{Float64}, tspan, alg::Tsit5, p::Union{Nothing,Vector{Float64}}, cbs, opts) =
-    solve_rhs(f, u0, tspan, alg, p, cbs, opts)
-_solve_rhs(@nospecialize(f), u0, tspan, alg, p, cbs, opts) = _solve_fm(_function_model(f, p, u0), u0, tspan, alg, p, cbs, opts)
-_function_model(@nospecialize(f), p::P, ::Vector{T}) where {P,T} =
-    FunctionModel{P,T,Dynamic{Callable{RHSSig{P,T},Nothing}}}(Dynamic{Callable{RHSSig{P,T},Nothing}}(f), p)
-"The state at the parameters' dual type, as SciML promotes `u0` for a gradient in `p`."
-_promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
-_promote_state(u0::Vector, p) = u0
+Solve a problem of any type that implements `ODEProblemTrait`: TDE's `ODEProblem`, or a problem
+type of its own (`@implement ODEProblemTrait MyProblem`), whose solver code is compiled for that
+type. Rodas5 takes `Float64` states and the problem's `jacobian!`.
 
+This front end is neither specialized nor inferred on the problem's type, so a caller's code does
+not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
+which calls the solver at that type.
 """
-    solve(prob::ODEProblem, Rodas5(); callback, saveat, abstol, reltol)
-
-The plain function becomes two dynamic calls: at the plain signature, and at the library's dual
-numbers (ForwardDiff's `Dual` with the library's tag, `FDual{N}`) for the Jacobian (`N`, the chunk, is the state's length up to 8). The solver's
-code is compiled per `(P, N)`; a new function compiles only itself, at both signatures.
-"""
-function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing, kw...)
-    N = min(length(prob.u0), 8)
-    return _solve_ad(_function_model_ad(prob.f, prob.p, Val(N)), prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
-end
-_function_model_ad(@nospecialize(f), p::P, ::Val{N}) where {P,N} =
-    FunctionModelAD{P,N}(Dynamic{Callable{RHSSig{P,Float64},Nothing}}(f), Dynamic{Callable{DualSig{P,N},Nothing}}(f), p)
-_solve_ad(m::FunctionModelAD{P,N}, u0, tspan, alg, p::P, cbs, opts) where {P,N} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
-_solve_fm(m::FunctionModel{P,T}, u0::Vector{T}, tspan, alg, p::P, cbs, opts) where {P,T} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
+Base.@nospecializeinfer solve(@nospecialize(prob), alg::Union{Tsit5,Rodas5}; callback = nothing, kw...) =
+    _solve(prob, alg, _kept(callback), _options(; kw...))
+_solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
 
 # --- gradients through `solve` (row 5) --------------------------------------------------------------
 
@@ -123,18 +110,6 @@ function _gradient_sig(@nospecialize(loss), p::Vector{Float64}, ::Val{N}) where 
     cfg = ForwardDiff.GradientConfig(f, p, ForwardDiff.Chunk{N}(), Tg())
     return ForwardDiff.gradient(f, p, cfg, Val(false))      # the tag check off: the tag is the signature's
 end
-
-"""
-    solve(model, u0, tspan, Tsit5(); p = model, callback = nothing, kw...)
-
-A model of a type that conforms to `ODEModel{T}` (it implements `rhs!` itself, route A): the
-solver's code is compiled for that type, in the conformer's image or the session. The state keeps
-`u0`'s element type, which must be the model's `T`: a model of dual numbers (under `gradient`)
-takes a dual state, `eltype(p).(u0)`. Callbacks see `p` as `integ.p`, the model itself by default.
-Rodas5 takes `Float64` states and the model's `jacobian!` (finite differences by default).
-"""
-solve(model, u0::AbstractVector, tspan, alg::Union{Tsit5,Rodas5}; p = model, callback = nothing, kw...) =
-    solve_ode(model, _state(u0), (Float64(tspan[1]), Float64(tspan[2])), alg, p, _kept(callback), _options(; kw...))
 
 # The precompile workload: the solver for plain functions with `Vector{Float64}` and no parameters,
 # with and without callbacks. Any other function of these signatures runs this code: only the

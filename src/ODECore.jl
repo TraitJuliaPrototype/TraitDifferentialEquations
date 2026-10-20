@@ -1,39 +1,44 @@
-# ODECore: the trait module. The model, callbacks and the integrator as callbacks see it are
+# ODECore: the trait module. A problem, callbacks and the integrator as callbacks see it are
 # traits; the solvers' code is compiled for what these bounds can see (note "Keys"):
-#   - a model that implements `rhs!` itself is the receiver type, so the driver compiles
-#     per model type ("route A", the comparison);
-#   - a plain function is stored as a `Dynamic{Callable{…}}` in the library's `FunctionModel{P}`, so the
-#     driver compiles once per parameter type P, whatever the function (the default route);
+#   - a problem type that implements `rhs!` itself is the receiver type, so the solver compiles per
+#     problem type;
+#   - TDE's own `ODEProblem` stores a plain function as a `Dynamic{Callable{…}}` (by default), so the
+#     solver compiles once per element and parameter type, whatever the function; under
+#     `compiled_for(f)` it stores the function itself, and the solver compiles per function;
 #   - callbacks are kept as `Dynamic{Callback}` and see the integrator as a
 #     `Dynamic{IntegratorView}`, so a new callback compiles nothing in the solver.
 @trait_module module ODECore
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
-export ODEModel, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, solve_rhs, FunctionModel, FunctionModelAD, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
+export ODEProblemTrait, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
+       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
 
 # --- the traits --------------------------------------------------------------------------
 
 """
-What the solver needs from a model: the right-hand side, in place, at element type `T`, and its
-Jacobian in `u` (for implicit methods). The default Jacobian is by finite differences of `rhs!`; a
-model that can do better implements it (the library's `FunctionModelAD` does, with ForwardDiff's duals).
+What the solver needs from a problem: its initial state, time span and parameters, the right-hand
+side in place at element type `T`, and its Jacobian in `u` (for implicit methods). The default
+Jacobian is by finite differences of `rhs!`; a problem that can do better implements it (TDE's
+`ODEProblem` does, with ForwardDiff's duals). `p` is what callbacks see as `integ.p`.
 """
-@trait ODEModel{T} begin
-    rhs!(m::ODEModel{T}, du::Vector{T}, u::Vector{T}, t::Float64)::Nothing
-    jacobian!(m::ODEModel{T}, J::Matrix{T}, u::Vector{T}, t::Float64)::Nothing = fd_jacobian!(m, J, u, t)
+@trait ODEProblemTrait{T, P} begin
+    @const u0::Vector{T}
+    @const tspan::Tuple{Float64, Float64}
+    @const p::P
+    rhs!(prob::ODEProblemTrait{T, P}, du::Vector{T}, u::Vector{T}, t::Float64)::Nothing
+    jacobian!(prob::ODEProblemTrait{T, P}, J::Matrix{T}, u::Vector{T}, t::Float64)::Nothing = fd_jacobian!(prob, J, u, t)
 end
 
-"The default Jacobian: forward differences of `rhs!` (an internal function: `m` is a trait object)."
-function fd_jacobian!(m, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
+"The default Jacobian: forward differences of `rhs!` (an internal function: `prob` is a trait object, or a problem itself)."
+function fd_jacobian!(prob, J::Matrix{T}, u::Vector{T}, t::Float64) where {T}
     n = length(u)
-    f0 = zeros(Float64, n); f1 = zeros(Float64, n); up = copy(u)
-    rhs!(m, f0, u, t)
+    f0 = zeros(T, n); f1 = zeros(T, n); up = copy(u)
+    rhs!(prob, f0, u, t)
     for j in 1:n
-        h = sqrt(eps(Float64)) * max(abs(u[j]), 1.0)
+        h = sqrt(eps(Float64)) * max(abs(primal(u[j])), 1.0)
         up[j] = u[j] + h
-        rhs!(m, f1, up, t)
+        rhs!(prob, f1, up, t)
         for i in 1:n
             J[i, j] = (f1[i] - f0[i]) / h
         end
@@ -61,26 +66,12 @@ end
     affect!(cb::Callback, integ::Dynamic{IntegratorView})::Nothing
 end
 
-# --- the library's own conforming types ---------------------------------------------------
+# --- the signatures of plain functions --------------------------------------------------------
 
 "The signature of a plain right-hand side `f(du, u, p, t)`, at element type `T` (`Float64`, or dual numbers for gradients through `solve`)."
 const RHSSig{P,T} = Tuple{Vector{T},Vector{T},P,Float64}
 const CondSig = Tuple{Vector{Float64},Float64,Dynamic{IntegratorView}}
 const AffectSig = Tuple{Dynamic{IntegratorView}}
-
-"""
-A plain function as a model: the function at its declared signature `RHSSig{P, T}`, as its
-`Callable` bound gave it (`F`), and the parameters. `Dynamic` (the default), `F` is the same type for
-every function, so the solver compiles once per `(P, T)`; `Compiled`, `F` names the function, so the
-solver compiles per function, with the function inferred into it, and the signature still checked at
-every call.
-"""
-struct FunctionModel{P,T,F}
-    f::F
-    p::P
-end
-rhs!(m::FunctionModel{P,T}, du::Vector{T}, u::Vector{T}, t::Float64) where {P,T} = (m.f(du, u, m.p, t); nothing)
-@implement ODEModel{T} FunctionModel{P,T,F} where {P,T,F}
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
 # (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
@@ -94,25 +85,44 @@ const FDual{N} = ForwardDiff.Dual{ODETag,Float64,N}
 const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 
 """
-A plain function as a model for implicit methods: dynamic calls at the plain and at the dual
-signature (chunk size `N`, chosen by the library from the state's length). The solver compiles per
-`(P, N)`, never per function.
+    ODEProblem{T, P, R}
+
+TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain right-hand side
+`f(du, u, p, t)`, an initial state, a time span and parameters. The function is kept at its
+declared signature `RHSSig{P, T}` as `stored` gives it (`R`): a `Dynamic{Callable{…}}` by default,
+so the solver compiles once per `(T, P)`, or the function itself under `compiled_for(f)`, so the
+solver compiles per function. A plain function kept `Dynamic` is kept as given too (`fn`), for the
+Jacobian's dual numbers; a stored `Dynamic{Callable}` declares one signature, so its Jacobian is by
+finite differences.
 """
-struct FunctionModelAD{P,N}
-    f::Dynamic{Callable{RHSSig{P,Float64},Nothing}}
-    fd::Dynamic{Callable{DualSig{P,N},Nothing}}
+struct ODEProblem{T,P,R}
+    f::R
+    u0::Vector{T}
+    tspan::Tuple{Float64,Float64}
     p::P
+    fn::Any
 end
-rhs!(m::FunctionModelAD, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
-function jacobian!(m::FunctionModelAD{P,N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {P,N}
+rhs!(prob::ODEProblem{T,P}, du::Vector{T}, u::Vector{T}, t::Float64) where {T,P} = (prob.f(du, u, prob.p, t)::Nothing; nothing)
+"The Jacobian by ForwardDiff's duals (a `Float64` state), in chunks of up to 8 columns."
+jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) =
+    (ad_jacobian!(prob, J, u, t, Val(min(length(u), 8)))::Nothing; nothing)    # a function barrier on the chunk
+jacobian!(prob::ODEProblem{T}, J::Matrix{T}, u::Vector{T}, t::Float64) where {T} = fd_jacobian!(prob, J, u, t)
+"""
+The Jacobian at chunk `N`: one call per chunk of `N` columns, of the function at the library's dual
+numbers, `DualSig{P, N}`: as `stored` keeps it at that signature, so `Dynamic` where the problem's
+function is, and the function itself where it is compiled.
+"""
+function ad_jacobian!(prob::ODEProblem{Float64,P,R}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64, ::Val{N}) where {P,R,N}
+    R <: Dynamic && prob.fn === nothing && return fd_jacobian!(prob, J, u, t)    # a stored function: its one signature
+    fd = R <: Dynamic ? Dynamic{Callable{DualSig{P,N},Nothing}}(prob.fn) : prob.f
     n = length(u)
     ud = Vector{FDual{N}}(undef, n)
     dd = Vector{FDual{N}}(undef, n)
-    for c0 in 1:N:n                                   # one dynamic call per chunk of N columns
+    for c0 in 1:N:n
         for j in 1:n
             ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
         end
-        m.fd(dd, ud, m.p, t)
+        fd(dd, ud, prob.p, t)::Nothing
         for k in 1:N
             col = c0 + k - 1
             col > n && break
@@ -123,7 +133,7 @@ function jacobian!(m::FunctionModelAD{P,N}, J::Matrix{Float64}, u::Vector{Float6
     end
     return nothing
 end
-@implement ODEModel{Float64} FunctionModelAD{P,N} where {P,N}
+@implement ODEProblemTrait{T,P} ODEProblem{T,P,R} where {T,P,R}
 
 "A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
 struct FunctionCallback
@@ -260,15 +270,20 @@ end
 # --- the driver ---------------------------------------------------------------------------------
 
 """
-    solve_ode(m, u0, tspan, Tsit5(), p, callbacks, opts) -> ODESolution
+    solve_ode(prob, Tsit5(), callbacks, opts) -> ODESolution
 
-Integrate the model from `u0` over `tspan` with Tsit5 and a PI step-size controller. `p` is
-what callbacks see as `integ.p`; `callbacks` are kept callbacks (`keep_callback`). The element
-type `T` is `Float64`, or a dual number for a gradient through the solve; the step-size control
-reads primal values, so a gradient follows the primal solve's steps. Callbacks take `Float64` states.
+Integrate the problem from `prob.u0` over `prob.tspan` with Tsit5 and a PI step-size controller.
+`prob.p` is what callbacks see as `integ.p`; `callbacks` are kept callbacks (`keep_callback`). The
+element type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the
+solve; the step-size control reads primal values, so a gradient follows the primal solve's steps.
+Callbacks take `Float64` states.
 """
-function solve_ode(m::ODEModel, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, p,
-                   callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) where {T}
+solve_ode(prob::ODEProblemTrait, alg::Tsit5, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
+    tsit5_solve(prob, prob.u0, prob.tspan, prob.p, callbacks, opts)
+
+"Tsit5 for the problem `m` (a trait object), at its state's element type `T`."
+function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p,
+                     callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) where {T}
     t0, tf = tspan
     n = length(u0)
     T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
@@ -343,21 +358,6 @@ function solve_ode(m::ODEModel, u0::Vector{T}, tspan::Tuple{Float64,Float64}, al
     return ODESolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
 end
 
-
-"""
-    solve_rhs(f, u0, tspan, Tsit5(), p, callbacks, opts) -> ODESolution
-
-Tsit5 for a plain right-hand side `f(du, u, p, t)`, which enters at its declared signature
-`Callable{RHSSig{P, Float64}, Nothing}`. `Dynamic` by default, `Callable`'s (the solver compiled once
-per `P`); `Compiled` for `compiled_for(f)` (the solver compiled for `f`). One method per parameter type the library serves this way: a `Callable`
-bound's signature is a constant.
-"""
-solve_rhs(f::Callable{RHSSig{Vector{Float64},Float64},Nothing}, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-          alg::Tsit5, p::Vector{Float64}, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
-    solve_ode(FunctionModel{Vector{Float64},Float64,typeof(f)}(f, p), u0, tspan, alg, p, callbacks, opts)
-solve_rhs(f::Callable{RHSSig{Nothing,Float64},Nothing}, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-          alg::Tsit5, p::Nothing, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
-    solve_ode(FunctionModel{Nothing,Float64,typeof(f)}(f, p), u0, tspan, alg, p, callbacks, opts)
 
 "The value a step-size controller sees: a dual number's primal value, so that gradients follow the primal's steps."
 primal(x::Float64) = x
@@ -487,13 +487,20 @@ function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
 end
 
 """
-    solve_ode(m, u0, tspan, Rodas5(), p, callbacks, opts) -> ODESolution
+    solve_ode(prob, Rodas5(), callbacks, opts) -> ODESolution
 
-Rodas5 with the model's Jacobian (`jacobian!`: by the library's duals for a plain function, by
-finite differences or the model's own otherwise), dense LU, and a PI step-size controller.
+Rodas5 with the problem's Jacobian (`jacobian!`: by the library's duals for TDE's `ODEProblem`, by
+finite differences or the problem type's own otherwise), dense LU, and a PI step-size controller.
+`Float64` states only.
 """
-function solve_ode(m::ODEModel, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, alg::Rodas5, p,
-                   callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions)
+solve_ode(prob::ODEProblemTrait, alg::Rodas5, callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions) =
+    rodas5_solve(prob, prob.u0, prob.tspan, prob.p, callbacks, opts)
+rodas5_solve(m, u0::Vector{T}, tspan, p, callbacks, opts) where {T} =
+    throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
+
+"Rodas5 for the problem `m` (a trait object)."
+function rodas5_solve(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
+                      callbacks::Vector{Dynamic{Callback}}, opts::SolverOptions)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)

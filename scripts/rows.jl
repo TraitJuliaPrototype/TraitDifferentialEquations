@@ -39,14 +39,14 @@ row(1, "first Tsit5 solve, a plain function", @first solve(ODEProblem(lorenz!, U
 LOADS == "after" && load_big()
 
 rossler!(du, u, p, t) = (du[1] = -u[2] - u[3]; du[2] = u[1] + p[1] * u[2]; du[3] = p[2] + u[3] * (u[1] - p[3]); nothing)
-row(2, "a second model function", @first solve(ODEProblem(rossler!, U0, (0.0, 1.0), [0.2, 0.2, 5.7]), Tsit5()))
+row(2, "a second right-hand side function", @first solve(ODEProblem(rossler!, U0, (0.0, 1.0), [0.2, 0.2, 5.7]), Tsit5()))
 
-@eval struct Lorenz; s::Float64; r::Float64; b::Float64; end
+@eval struct Lorenz; u0::Vector{Float64}; tspan::Tuple{Float64,Float64}; p::Vector{Float64}; end
 @eval TraitDifferentialEquations.rhs!(m::Lorenz, du::Vector{Float64}, u::Vector{Float64}, t::Float64) =
-    (du[1] = m.s * (u[2] - u[1]); du[2] = u[1] * (m.r - u[3]) - u[2]; du[3] = u[1] * u[2] - m.b * u[3]; nothing)
-t = @elapsed @eval @implement ODEModel{Float64} Lorenz
-row(2, "a new model type: @implement", t)
-row(2, "a new model type: first solve", @first solve(Lorenz(10.0, 28.0, 8 / 3), U0, (0.0, 1.0), Tsit5()))
+    (p = m.p; du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)
+t = @elapsed @eval @implement ODEProblemTrait Lorenz
+row(2, "a new problem type: @implement", t)
+row(2, "a new problem type: first solve", @first solve(Lorenz(U0, (0.0, 1.0), P0), Tsit5()))
 
 row(3, "first Rodas5 solve", @first solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Rodas5()))
 

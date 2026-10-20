@@ -2,27 +2,21 @@
 
 ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
 
-Status (session 29, 2026-10-19): **built on the facts+traits compiler and measured.**
-- Runs on julia-1.13 61852d8fb1 with TraitWorld 375a930: Julia's compiler compiles the trait modules by facts, and `Dynamic` operations are call-site splits (part D).
-- The test suite passes there. The scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library.
-- Measured in session 29 (the build of 2026-10-19): "Measured in session 29" below, this file's dated results. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: the first-call rows from the measurement round of 2026-10-20 (julia-1.13 3b8085c222, TraitWorld bed3782, 2 runs per load order); the run time per step still from the build of 2026-10-19.
-- Not measured yet: PlainODE as the control, route A, compiled mode, and the rest listed below.
-- Built in session 29, correctness first: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…}` compiled per function, the user's mistakes at the implementation (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 29)" below.
-- The numbers of sessions 23–27 are under "History (before the facts compiler)". They predate parts (B), (C) and (D) of the compiler.
-
-Earlier (session 27): steps 1, 3 and 4 done. Step 4 adds gradients through Tsit5: the solver is generic in the element type (the step-size control reads primal values, so a gradient follows the primal solve's steps), `u0` is promoted to the parameters' duals as SciML does, and `gradient(loss, p)` tags the duals by the loss's primal signature (`Tag{Sig{Tuple{Vector{Float64}}, Float64}, Float64}`), with the loss as a dynamic call. Rows 1–5 measured then on the patched build (see the table under "History (before the facts compiler)"). Steps 1 and 3 (sessions 23–24): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, and Rodas5 with ForwardDiff's own `Dual` under the library's tag.
+Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 711484a23e with TraitWorld (the commit in this repository's log). A problem is any type that implements `ODEProblemTrait`; TDE's own `ODEProblem` is the canonical one; `solve(prob, alg)` is the one entry point. The test suite passes; the scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3. This file keeps its own dated results below: "Checked in W-2", "Measured in session 29", and the numbers of sessions 23–27 under "History (before the facts compiler)".
 
 **How it is built (keys):**
-- `ODEModel{T}`: `rhs!(m, du, u, t)`, `jacobian!(m, J, u, t)` (default: finite differences).
-- **The function route (B).** A plain function enters `ODECore.solve_rhs` at its declared signature, `f::Callable{RHSSig{P, Float64}, Nothing}`, and is held in the library's `FunctionModel{P, T, F}` as the bound gave it:
-  - `Dynamic`, `Callable`'s default: `F` is the same type for every function, so the solver compiles once per parameter type `P`, never per function;
-  - `Compiled`, `ODEProblem(compiled_for(f), …)`: `F` names the function, so the solver compiles for `f`, with `f` inferred into it, and the signature still checked at every call.
-  - `Compiled` is served for `Float64` states with `Vector{Float64}` or no parameters (a `Callable` bound's signature is a constant, so one entry per served `P`). Elsewhere (`Float32`, gradients, Rodas5) the function runs as a dynamic call, with the same values.
-- **Route A.** A model type that implements `rhs!` is the receiver type, and the solver compiles for it, in the image of the package that declares the implementation (`examples/LorenzModels`: `Lorenz{T}` with its own buffer and Jacobian, workload in the package). Its state keeps `u0`'s element type, which must be the model's `T`. Callbacks see the model as `integ.p`.
+- **`ODEProblemTrait{T, P}`:** declared fields `u0::Vector{T}`, `tspan`, `p::P`; operations `rhs!(prob, du, u, t)` and `jacobian!(prob, J, u, t)` (default: finite differences of `rhs!`). The solver is compiled for what the bound sees: the problem's type.
+- **TDE's `ODEProblem{T, P, R}`** (`ODEProblem(f, u0, tspan, p)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept as TraitWorld's `stored` gives it (`R`):
+  - `Dynamic{Callable{RHSSig{P, T}, Nothing}}` by default (`Callable`'s): `R` is the same type for every function, so the solver compiles once per state and parameter type, never per function;
+  - under `ODEProblem(compiled_for(f), …)` the function itself: the solver compiles for `f`, with `f` inferred into it, and its result still checked at every call. For every state and parameter type, Rodas5 and gradients included.
+  - Its `jacobian!` (a `Float64` state) is by ForwardDiff's `Dual` under the library's tag, calling the function at the dual signature in chunks of up to 8 columns; a stored `Dynamic{Callable}` given by the user declares one signature, so its Jacobian is by finite differences.
+  - The state keeps its element type, or takes the parameters' dual type for a gradient in `p`, as SciML promotes it.
+- **A problem type of one's own** implements `rhs!` (and `jacobian!` if it can do better) and has the declared fields: `@implement ODEProblemTrait MyProblem`. The solver compiles for it, in the image of the package that declares the implementation (`examples/LorenzModels`: `LorenzProblem{T}` with its own buffer and Jacobian, its parameters a mutable `LorenzParams{T}`, workload in the package). Callbacks see its `p` as `integ.p`.
+- **`solve(prob, alg; callback, saveat, abstol, reltol, dtmax, maxiters)`:** a front end neither specialized nor inferred on the problem's type (`@nospecializeinfer`), so a caller's code does not infer the solver again, and behind it a function barrier compiled per problem type.
 - `IntegratorView{T, P}`: fields only (`u`, `t`, `p`, `u_modified`, `terminated`), so there is no receiver type; callbacks see the integrator as a `Dynamic{IntegratorView}`.
 - `Callback`: kept as `Dynamic{Callback}`; `DiscreteCallback(condition, affect!)` from plain functions is the library's `FunctionCallback` of two `Dynamic{Callable{…}}`s; a callback type conforms (`Bounce`, `RaiseSigma` in `LorenzModels`; a new one at the prompt in `scripts/session.jl`).
-- Automatic differentiation (steps 3–4): Rodas5's Jacobian with ForwardDiff's `Dual` and a library-owned tag; gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`, tested in session 23), with a guard for closures that capture duals.
-- ForwardDiff, like Base, is called directly. Its code is compiled under the facts policy (case C of `../writeup/notes/3-wrapping.md`).
+- Gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`), with a guard for closures that capture duals.
+- ForwardDiff, like Base, is called directly.
 
 ## What it demonstrates
 
@@ -35,19 +29,19 @@ SciML today recompiles the solver for every new callback closure (0.84–0.96 s 
 
 ## Scope
 
-**Pieces** (as built; the plan's split into `ODETsit5`, `ODERodas` was not needed):
+**Pieces:**
 - **`src/ODECore.jl`,** the trait module:
-  - the traits `ODEModel{T}`, `IntegratorView{T, P}`, `Callback`;
-  - the library's conforming types `FunctionModel{P, T, F}`, `FunctionModelAD{P, N}`, `FunctionCallback`;
+  - the traits `ODEProblemTrait{T, P}`, `IntegratorView{T, P}`, `Callback`;
+  - the library's conforming types `ODEProblem{T, P, R}`, `FunctionCallback`;
   - Tsit5 (tableau and step from OrdinaryDiffEqTsit5 2.0.0), Rodas5 (from OrdinaryDiffEqRosenbrock 2.2.0) with ForwardDiff's `Dual` under the library's tag, dense LU, the PI controller, `saveat` by interpolation;
-  - `solve_rhs`, the entry with the `Callable` bound.
-- **`src/TraitDifferentialEquations.jl`,** the ordinary layer: `ODEProblem`, `solve`, `DiscreteCallback`, `gradient` (tags by the loss's primal signature).
-- **`examples/LorenzModels`,** a user package: an ordinary module around its trait module `Models`, with `Lorenz{T}` (mutable, its own buffer, a hand-written Jacobian), `Bounce` (writes the state), `RaiseSigma` (writes the model's σ), and a workload.
-- **`scripts/session.jl`:** the interactive session (below). `scripts/rows.jl`, `baseline.jl`, `errors.jl`, `pirate.jl`, `runtime.jl`: the measurements of session 27.
+  - `solve_ode(prob::ODEProblemTrait, alg, callbacks, options)`, the entry.
+- **`src/TraitDifferentialEquations.jl`,** the ordinary layer: `ODEProblem(f, u0, tspan, p)`, `solve`, `DiscreteCallback`, `gradient` (tags by the loss's primal signature).
+- **`examples/LorenzModels`,** a user package: an ordinary module around its trait module `Models`, with `LorenzProblem{T}` (its own buffer, a hand-written Jacobian, parameters in a mutable `LorenzParams{T}`), `Bounce` (writes the state), `RaiseSigma` (writes the parameters' σ), and a workload.
+- **`scripts/session.jl`:** the interactive session (below). `scripts/rows.jl`, `baseline.jl`, `errors.jl`, `pirate.jl`, `runtime.jl`: the measurements.
 
 **Baselines:**
 - **(a) stock SciML:** OrdinaryDiffEqTsit5, OrdinaryDiffEqRosenbrock and ForwardDiff;
-- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `compiled_call`, model types and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
+- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `compiled_for`, problem types (fields `u0`, `tspan`, `p`) and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
 
 ## Measurements
 
@@ -59,6 +53,25 @@ The rows (1–13) are defined in the table under "History (before the facts comp
 - row 9 is caught early for models written as trait-world code;
 - row 11 stays within its bounds;
 - row 12 runs.
+
+## Checked in W-2 (2026-10-21)
+
+The restructuring around `ODEProblemTrait`, checked for correctness and for gross regressions, not measured: julia-1.13 711484a23e, product setting, one process, load order "none", load 0.5–1.4.
+- The test suite passes (64 checks, 1 broken as before); the session passes in both libraries with identical `RESULT` lines.
+- `scripts/rows.jl none` once, against TDE before W-2 on the same build (`git` main, aac66b7):
+
+| Row | Before W-2 | W-2 |
+|---|---|---|
+| 1 first Tsit5 solve, a plain function | 23.0 ms | 19.4 ms |
+| 2 a second right-hand side function | 17.9 ms | 21.4 ms |
+| 2 a new problem type (before: model type): `@implement` / first solve | 61.9 / 325.7 ms | 96.9 / 268.9 ms |
+| 3 first Rodas5 solve | 24.4 ms | 24.9 ms |
+| 4 a new callback closure / a second one | 22.8 / 14.8 ms | 27.1 / 17.6 ms |
+| 5 first gradient / a second loss / a third loss | 54.2 / 62.6 / 83.0 ms | 80.3 / 49.7 / 115.9 ms (gc 17 and 19 ms in the first and third) |
+| 6 a Float32 state, first solve | 403.5 ms | 428.8 ms |
+
+- Found on the way: a front end specialized on the problem's type made each caller's first call infer the solver's entry (rows 1 and 2 at 2–3× before); `@nospecializeinfer` and a function barrier per problem type removed it. A first gradient compiles the same methods in both versions (29 and 31 ms in one process); the rows' difference is within one run's noise and collection.
+- `@implement` of a problem type checks three declared fields beside the operations (97 against 62 ms).
 
 ## Correctness (session 29)
 

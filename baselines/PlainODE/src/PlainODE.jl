@@ -8,13 +8,14 @@ per `(T, P)`, not per function; callbacks are kept in a `Vector{Any}` and called
 asserted results; gradients use the same tag labelled by the loss's signature and wrap the loss.
 
 The other routes of TraitDifferentialEquations, written the same way (session 30):
-- a model type that adds a method to `PlainODE.rhs!` (and optionally `jacobian!`): the solver is
-  specialized on the model's type, as it is compiled for the implementing type there;
+- a problem type with the fields `u0`, `tspan` and `p` that adds a method to `PlainODE.rhs!` (and
+  optionally `jacobian!`): the solver is specialized on the problem's type, as it is compiled for
+  the implementing type there;
 - `compiled_for(f)`: the function passed unwrapped, so the solver specializes on it (the plain
   equivalent of `Compiled`; nothing checks the signature but the call itself);
 - callback types that add methods to `PlainODE.condition` and `PlainODE.affect!`;
 - Rodas5, with the Jacobian by ForwardDiff at a library-owned tag (two FunctionWrappers) for a
-  plain function, and the model's `jacobian!` (finite differences by default) for a model type.
+  plain function, and the problem's `jacobian!` (finite differences by default) for a problem type.
 """
 module PlainODE
 using FunctionWrappers: FunctionWrapper
@@ -57,17 +58,17 @@ condition(cb::DiscreteCallback, u, t, integ) = cb.condition(u, t, integ)
 affect!(cb::DiscreteCallback, integ) = (cb.affect!(integ); nothing)
 
 """
-    rhs!(model, du, u, t), jacobian!(model, J, u, t)
+    rhs!(prob, du, u, t), jacobian!(prob, J, u, t)
 
-A model type's right-hand side and Jacobian; a model type adds methods (the plain form of
-conforming to `ODEModel`). The Jacobian defaults to forward differences of `rhs!`. The default
+A problem type's right-hand side and Jacobian; a problem type adds methods (the plain form of
+conforming to `ODEProblemTrait`). The Jacobian defaults to forward differences of `rhs!`. The default
 takes untyped arguments: typed like the trait's declaration, it would be ambiguous with a model's
 method generic in its element type (`jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`).
 """
 function rhs! end
 jacobian!(m, J, u, t) = fd_jacobian!((du, u, p, t) -> rhs!(m, du, u, t), J, u, nothing, t)
 
-"A model type as the solver's function `(du, u, p, t)`: the solver specializes on `M`."
+"A problem type as the solver's function `(du, u, p, t)`: the solver specializes on `M`."
 struct ModelRHS{M}
     m::M
 end
@@ -297,7 +298,7 @@ struct WrappedAD{P,N}
     fd::FunctionWrapper{Nothing,Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}}
 end
 (w::WrappedAD)(du, u, p, t) = w.f(du, u, p, t)
-"The Jacobian Rodas5 asks for: by duals for a wrapped function, the model's `jacobian!` for a model type."
+"The Jacobian Rodas5 asks for: by duals for a wrapped function, the problem's `jacobian!` for a problem type."
 function pjacobian!(m::WrappedAD{P,N}, J::Matrix{Float64}, u::Vector{Float64}, p::P, t::Float64) where {P,N}
     n = length(u)
     ud = Vector{FDual{N}}(undef, n)
@@ -544,10 +545,8 @@ function _solve(@nospecialize(f), u0::Vector{T}, tspan, alg, p::P, cbs, opts) wh
     w = FunctionWrapper{Nothing,Tuple{Vector{T},Vector{T},P,Float64}}(f isa Compiled ? f.f : f)
     return solve_ode(w, u0, tspan, alg, p, cbs, opts)
 end
-# compiled mode, where TraitDifferentialEquations serves it (Float64 states, Vector{Float64} or no
-# parameters): the function itself, so the solver specializes on its type
-_solve(f::Compiled, u0::Vector{Float64}, tspan, alg::Tsit5, p::Union{Nothing,Vector{Float64}}, cbs, opts) =
-    solve_ode(f.f, u0, tspan, alg, p, cbs, opts)
+# compiled mode: the function itself, so the solver specializes on its type
+_solve(f::Compiled, u0::Vector, tspan, alg::Tsit5, p, cbs, opts) = solve_ode(f.f, u0, tspan, alg, p, cbs, opts)
 function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing, kw...)
     N = min(length(prob.u0), 8)
     return _solve_ad(prob.f isa Compiled ? prob.f.f : prob.f, prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...), Val(N))
@@ -555,12 +554,12 @@ end
 _solve_ad(@nospecialize(f), u0, tspan, alg, p::P, cbs, opts, ::Val{N}) where {P,N} =
     solve_ode(WrappedAD{P,N}(f, f), u0, tspan, alg, p, cbs, opts)
 """
-    solve(model, u0, tspan, alg; p = model, callback, kw...)
+    solve(prob, alg; callback, kw...)
 
-A model type with a `rhs!` method: the solver specializes on it. The state keeps `u0`'s element type.
+A problem type with the fields `u0`, `tspan`, `p` and a `rhs!` method: the solver specializes on it.
 """
-solve(model, u0::AbstractVector, tspan, alg::Union{Tsit5,Rodas5}; p = model, callback = nothing, kw...) =
-    solve_ode(ModelRHS(model), _state(u0), (Float64(tspan[1]), Float64(tspan[2])), alg, p, _kept(callback), _options(; kw...))
+solve(prob, alg::Union{Tsit5,Rodas5}; callback = nothing, kw...) =
+    solve_ode(ModelRHS(prob), prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
 
 struct Sig{A,S} end
 function gradient(@nospecialize(loss), p::Vector{Float64})
