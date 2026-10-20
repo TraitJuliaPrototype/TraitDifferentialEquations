@@ -7,7 +7,7 @@ Status (session 29, 2026-10-19): **built on the facts+traits compiler and measur
 - The test suite passes there. The scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library.
 - Measured in session 29 (the build of 2026-10-19): "Measured in session 29" below, this file's dated results. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: the first-call rows from the measurement round of 2026-10-20 (julia-1.13 3b8085c222, TraitWorld bed3782, 2 runs per load order); the run time per step still from the build of 2026-10-19.
 - Not measured yet: PlainODE as the control, route A, compiled mode, and the rest listed below.
-- Built in session 29, correctness first: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…, CompiledCall}`, the user's mistakes at the implementation (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 29)" below.
+- Built in session 29, correctness first: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…}` compiled per function, the user's mistakes at the implementation (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 29)" below.
 - The numbers of sessions 23–27 are under "History (before the facts compiler)". They predate parts (B), (C) and (D) of the compiler.
 
 Earlier (session 27): steps 1, 3 and 4 done. Step 4 adds gradients through Tsit5: the solver is generic in the element type (the step-size control reads primal values, so a gradient follows the primal solve's steps), `u0` is promoted to the parameters' duals as SciML does, and `gradient(loss, p)` tags the duals by the loss's primal signature (`Tag{Sig{Tuple{Vector{Float64}}, Float64}, Float64}`), with the loss as a dynamic call. Rows 1–5 measured then on the patched build (see the table under "History (before the facts compiler)"). Steps 1 and 3 (sessions 23–24): Tsit5 with plain functions and model types, discrete callbacks, the SciML-like interface, and Rodas5 with ForwardDiff's own `Dual` under the library's tag.
@@ -15,12 +15,12 @@ Earlier (session 27): steps 1, 3 and 4 done. Step 4 adds gradients through Tsit5
 **How it is built (keys):**
 - `ODEModel{T}`: `rhs!(m, du, u, t)`, `jacobian!(m, J, u, t)` (default: finite differences).
 - **The function route (B).** A plain function enters `ODECore.solve_rhs` at its declared signature, `f::Callable{RHSSig{P, Float64}, Nothing}`, and is held in the library's `FunctionModel{P, T, F}` as the bound gave it:
-  - `DynamicCall`, the default: `F` is a `DynamicFn`, so the solver compiles once per parameter type `P`, never per function;
-  - `CompiledCall`, `ODEProblem(compiled_call(f), …)`: `F` names the function, so the solver compiles for `f`, with `f` inferred into it, and the signature still checked at every call.
-  - The compiled mode is served for `Float64` states with `Vector{Float64}` or no parameters (a `Callable` bound's signature is a constant, so one entry per served `P`). Elsewhere (`Float32`, gradients, Rodas5) the function runs as a dynamic call, with the same values.
+  - `Dynamic`, `Callable`'s default: `F` is the same type for every function, so the solver compiles once per parameter type `P`, never per function;
+  - `Compiled`, `ODEProblem(compiled_for(f), …)`: `F` names the function, so the solver compiles for `f`, with `f` inferred into it, and the signature still checked at every call.
+  - `Compiled` is served for `Float64` states with `Vector{Float64}` or no parameters (a `Callable` bound's signature is a constant, so one entry per served `P`). Elsewhere (`Float32`, gradients, Rodas5) the function runs as a dynamic call, with the same values.
 - **Route A.** A model type that implements `rhs!` is the receiver type, and the solver compiles for it, in the image of the package that declares the implementation (`examples/LorenzModels`: `Lorenz{T}` with its own buffer and Jacobian, workload in the package). Its state keeps `u0`'s element type, which must be the model's `T`. Callbacks see the model as `integ.p`.
 - `IntegratorView{T, P}`: fields only (`u`, `t`, `p`, `u_modified`, `terminated`), so there is no receiver type; callbacks see the integrator as a `Dynamic{IntegratorView}`.
-- `Callback`: kept as `Dynamic{Callback}`; `DiscreteCallback(condition, affect!)` from plain functions is the library's `FunctionCallback` of two `DynamicFn`s; a callback type conforms (`Bounce`, `RaiseSigma` in `LorenzModels`; a new one at the prompt in `scripts/session.jl`).
+- `Callback`: kept as `Dynamic{Callback}`; `DiscreteCallback(condition, affect!)` from plain functions is the library's `FunctionCallback` of two `Dynamic{Callable{…}}`s; a callback type conforms (`Bounce`, `RaiseSigma` in `LorenzModels`; a new one at the prompt in `scripts/session.jl`).
 - Automatic differentiation (steps 3–4): Rodas5's Jacobian with ForwardDiff's `Dual` and a library-owned tag; gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`, tested in session 23), with a guard for closures that capture duals.
 - ForwardDiff, like Base, is called directly. Its code is compiled under the facts policy (case C of `../writeup/notes/3-wrapping.md`).
 
@@ -77,14 +77,14 @@ No timings: these rows say what happens, not how fast. Tests: `test/routea.jl`, 
 
 Since TraitWorld 3ba6c05, the messages of (b) and (c′) name `rhs!` and the declared argument types; the two tests that were broken pass (TraitDifferentialEquations 62e9fa4).
 
-**A right-hand side with a declared signature, in both modes** (review example 10):
+**A right-hand side with a declared signature, `Dynamic` and `Compiled`** (review example 10; session 29, in the spelling of then, `DynamicCall` and `CompiledCall`):
 
-| Case | `DynamicCall` (default) | `CompiledCall` (`compiled_call(f)`) |
+| Case | `Dynamic` (default) | `Compiled` (`compiled_for(f)`) |
 |---|---|---|
 | Lorenz, saved states | identical (`==`) | identical |
 | out of place, `f(u, p, t)` | `MethodError` for the declared arguments at the first call, 15 frames | first a warning at the model's first use (`rhs!` … always throws (inferred `Union{}`): a fallback, not an implementation), then the same `MethodError` |
 | returns `du` | `TypeError: expected Nothing` at the first call | warning, then the same `TypeError` |
-| an explicit wrapper for another signature, `Callable{Tuple{Vector{Float64}}, Nothing, CompiledCall}(f)` | `TraitBoundError` at the entry, before the solve, naming both signatures | the same |
+| a stored function of another signature, `Dynamic{Callable{Tuple{Vector{Float64}}, Nothing}}(f)` | `TraitBoundError` at the entry, before the solve, naming both signatures | the same |
 | `Float32` state, Rodas5, gradient | — | no compiled entry: runs dynamic, identical values |
 | a function redefined at the prompt | the next solve uses the new definition | the same (the compiled solver is recompiled: the function's owner changed a fact) |
 
@@ -92,7 +92,7 @@ Wanted from TraitWorld: refuse a function without a method at `A`, or with a res
 
 **The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 10 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
 
-**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `compiled_call` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the implementation.
+**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `compiled_for` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the implementation.
 
 ## Measured in session 29
 
@@ -128,7 +128,7 @@ A dated table: julia-1.13 61852d8fb1, TraitWorld 375a930 (the build of 2026-10-1
 - Any row at a real REPL: the rows above ran in fresh processes.
 - **Row 1 for route A:** the first solve of `LorenzModels.Lorenz` from its image (the plan's "precompiled user package"), against `PlainLorenzModels`.
 - **Row 4 for callback types:** a new callback type at the prompt, against a new closure.
-- **Example 10, `CompiledCall`:** run time per step at n = 3 and n = 1,000 against `DynamicCall` and the model type (row 11's columns); compile time for a second function in compiled mode; what the image holds.
+- **Example 10, `Compiled`:** run time per step at n = 3 and n = 1,000 against `Dynamic` and the model type (row 11's columns); compile time for a second function in compiled mode; what the image holds.
 - **Row 5 for route A:** first gradient and a second loss through `Lorenz{Dual}`.
 - **Row 6** from an image that holds the key (the per-session cost, 0.45–0.46 s, is above).
 - **Row 9 for route A:** the correctness table below in lines, frames and longest line, beside SciML's.
