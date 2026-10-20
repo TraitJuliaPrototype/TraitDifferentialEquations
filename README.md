@@ -111,8 +111,8 @@ A dated table: julia-1.13 61852d8fb1, TraitWorld 375a930 (the build of 2026-10-1
 | a `Float32` state, first solve | 0.46 s | 0.45 s | 0.45 s |
 
 - At the start of the phase: a new model type after the loads took 2.0 s and 2.1 s.
-- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms. The first solve is not back at 33–44 ms yet (the round of 2026-10-20: 60–62 / 44–46 ms without loads; `evidence.md` §3).
-- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without (24 ms in an earlier run): not diagnosed. Not reproduced in the round of 2026-10-20 (julia-1.13 3b8085c222): 24.6–24.7 ms after the loads, against 12.6–12.8 ms without (`evidence.md` §3). The remaining difference is open (the design repository's `writeup/open-issues.md` §4.15).
+- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms, timed inside `@elapsed`. Since E-146 (2026-10-20) `scripts/rows.jl` times each first call whole: `@implement` 66–74 ms and the first solve 335–371 ms in every load order, the solve mostly the solver compiled for the new key (`../writeup/design/evidence.md` §3).
+- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without, on the build of 2026-10-19. Diagnosed (E-141: `solve`'s plain front end, invalidated by IntervalArithmetic's ForwardDiff extension) and fixed by a function barrier (E-146): 21–23 ms in every load order.
 - The first Tsit5 solve here is a plain function's, not route A's precompiled package (row 1 of the plan).
 
 **Run time per solver step** (row 11; `scripts/runtime.jl`):
