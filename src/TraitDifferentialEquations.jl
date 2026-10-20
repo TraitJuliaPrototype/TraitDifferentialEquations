@@ -8,7 +8,7 @@ viability; see README.md for the measurements.
 
 A package pairs a trait module with an ordinary module that uses both (rule 1): this
 module is the ordinary one. It turns plain functions into dynamic calls at the declared
-signatures (the boundary's translation for a `Callable` in `DynamicCall` mode) and
+signatures (the boundary's translation for a `Dynamic` `Callable`) and
 calls into `ODECore`.
 """
 module TraitDifferentialEquations
@@ -36,7 +36,7 @@ _state(u0::AbstractVector) = Vector{Float64}(u0)
 
 "A discrete callback from two plain functions: `condition(u, t, integ)::Bool` and `affect!(integ)`."
 DiscreteCallback(condition, affect!) =
-    FunctionCallback(dynamic_fn(CondSig, Bool, condition), dynamic_fn(AffectSig, Nothing, affect!))
+    FunctionCallback(Dynamic{Callable{CondSig,Bool}}(condition), Dynamic{Callable{AffectSig,Nothing}}(affect!))
 
 _kept(::Nothing) = Dynamic{Callback}[]
 _kept(cb) = Dynamic{Callback}[keep_callback(cb)]
@@ -49,10 +49,9 @@ _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat
     solve(prob::ODEProblem, Tsit5(); callback = nothing, saveat = [], abstol, reltol)
 
 The plain function enters at its declared signature `(Vector{T}, Vector{T}, P, Float64) -> Nothing`.
-By default it is a dynamic call: the solver's code is compiled once per parameter type `P`, never
-per function. `ODEProblem(compiled_call(f), …)` asks for the compiled mode: the solver is compiled
-for `f`, with `f` inferred into it, and the signature still checked at every call. The compiled
-mode is served for `Float64` states with `Vector{Float64}` or no parameters (`ODECore.solve_rhs`);
+By default it is `Dynamic` (`Callable`'s default): the solver's code is compiled once per parameter
+type `P`, never per function. `ODEProblem(compiled_for(f), …)` asks for `Compiled`: the solver is
+compiled for `f`, with `f` inferred into it, and the signature still checked at every call. `Compiled` is served for `Float64` states with `Vector{Float64}` or no parameters (`ODECore.solve_rhs`);
 elsewhere (`Float32` states, gradients, Rodas5) the function runs as a dynamic call, with the same results.
 """
 function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, kw...)
@@ -68,7 +67,7 @@ _solve_rhs(@nospecialize(f), u0::Vector{Float64}, tspan, alg::Tsit5, p::Union{No
     solve_rhs(f, u0, tspan, alg, p, cbs, opts)
 _solve_rhs(@nospecialize(f), u0, tspan, alg, p, cbs, opts) = _solve_fm(_function_model(f, p, u0), u0, tspan, alg, p, cbs, opts)
 _function_model(@nospecialize(f), p::P, ::Vector{T}) where {P,T} =
-    FunctionModel{P,T,DynamicFn{RHSSig{P,T},Nothing}}(dynamic_fn(RHSSig{P,T}, Nothing, f), p)
+    FunctionModel{P,T,Dynamic{Callable{RHSSig{P,T},Nothing}}}(Dynamic{Callable{RHSSig{P,T},Nothing}}(f), p)
 "The state at the parameters' dual type, as SciML promotes `u0` for a gradient in `p`."
 _promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
 _promote_state(u0::Vector, p) = u0
@@ -85,7 +84,7 @@ function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing,
     return _solve_ad(_function_model_ad(prob.f, prob.p, Val(N)), prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
 end
 _function_model_ad(@nospecialize(f), p::P, ::Val{N}) where {P,N} =
-    FunctionModelAD{P,N}(dynamic_fn(RHSSig{P,Float64}, Nothing, f), dynamic_fn(DualSig{P,N}, Nothing, f), p)
+    FunctionModelAD{P,N}(Dynamic{Callable{RHSSig{P,Float64},Nothing}}(f), Dynamic{Callable{DualSig{P,N},Nothing}}(f), p)
 _solve_ad(m::FunctionModelAD{P,N}, u0, tspan, alg, p::P, cbs, opts) where {P,N} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
 _solve_fm(m::FunctionModel{P,T}, u0::Vector{T}, tspan, alg, p::P, cbs, opts) where {P,T} = solve_ode(m, u0, tspan, alg, p, cbs, opts)
 
@@ -120,7 +119,7 @@ function _gradient_sig(@nospecialize(loss), p::Vector{Float64}, ::Val{N}) where 
     Tg = ForwardDiff.Tag{Sig{Tuple{Vector{Float64}},Float64},Float64}
     D = ForwardDiff.Dual{Tg,Float64,N}
     # the loss as a dynamic call at its dual signature: ForwardDiff's driver compiles once per (N, signature)
-    f = dynamic_fn(Tuple{Vector{D}}, D, loss)
+    f = Dynamic{Callable{Tuple{Vector{D}},D}}(loss)
     cfg = ForwardDiff.GradientConfig(f, p, ForwardDiff.Chunk{N}(), Tg())
     return ForwardDiff.gradient(f, p, cfg, Val(false))      # the tag check off: the tag is the signature's
 end

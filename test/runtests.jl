@@ -59,8 +59,8 @@ end
     # the library's dual Jacobian equals the analytic one
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
     m = TraitDifferentialEquations.ODECore.FunctionModelAD{Vector{Float64},3}(
-        dynamic_fn(TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}, Nothing, lorenz!),
-        dynamic_fn(TraitDifferentialEquations.DualSig{Vector{Float64},3}, Nothing, lorenz!), P0)
+        Dynamic{Callable{TraitDifferentialEquations.RHSSig{Vector{Float64},Float64},Nothing}}(lorenz!),
+        Dynamic{Callable{TraitDifferentialEquations.DualSig{Vector{Float64},3},Nothing}}(lorenz!), P0)
     TraitDifferentialEquations.ODECore.jacobian!(m, J, u, 0.0)
     @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
     # a stiff problem: Robertson, mass conserved

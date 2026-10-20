@@ -2,7 +2,7 @@
 # traits; the solvers' code is compiled for what these bounds can see (note "Keys"):
 #   - a model that implements `rhs!` itself is the receiver type, so the driver compiles
 #     per model type ("route A", the comparison);
-#   - a plain function is stored as a `DynamicFn` in the library's `FunctionModel{P}`, so the
+#   - a plain function is stored as a `Dynamic{Callable{…}}` in the library's `FunctionModel{P}`, so the
 #     driver compiles once per parameter type P, whatever the function (the default route);
 #   - callbacks are kept as `Dynamic{Callback}` and see the integrator as a
 #     `Dynamic{IntegratorView}`, so a new callback compiles nothing in the solver.
@@ -70,10 +70,10 @@ const AffectSig = Tuple{Dynamic{IntegratorView}}
 
 """
 A plain function as a model: the function at its declared signature `RHSSig{P, T}`, as its
-`Callable` bound gave it (`F`), and the parameters. In `DynamicCall` mode `F` is a `DynamicFn`,
-the same type for every function, so the solver compiles once per `(P, T)`; in `CompiledCall`
-mode `F` names the function, so the solver compiles per function, with the function inferred
-into it, and the signature still checked at every call.
+`Callable` bound gave it (`F`), and the parameters. `Dynamic` (the default), `F` is the same type for
+every function, so the solver compiles once per `(P, T)`; `Compiled`, `F` names the function, so the
+solver compiles per function, with the function inferred into it, and the signature still checked at
+every call.
 """
 struct FunctionModel{P,T,F}
     f::F
@@ -99,8 +99,8 @@ signature (chunk size `N`, chosen by the library from the state's length). The s
 `(P, N)`, never per function.
 """
 struct FunctionModelAD{P,N}
-    f::DynamicFn{RHSSig{P,Float64},Nothing}
-    fd::DynamicFn{DualSig{P,N},Nothing}
+    f::Dynamic{Callable{RHSSig{P,Float64},Nothing}}
+    fd::Dynamic{Callable{DualSig{P,N},Nothing}}
     p::P
 end
 rhs!(m::FunctionModelAD, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (m.f(du, u, m.p, t); nothing)
@@ -127,8 +127,8 @@ end
 
 "A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
 struct FunctionCallback
-    cond::DynamicFn{CondSig,Bool}
-    aff::DynamicFn{AffectSig,Nothing}
+    cond::Dynamic{Callable{CondSig,Bool}}
+    aff::Dynamic{Callable{AffectSig,Nothing}}
 end
 condition(cb::FunctionCallback, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView}) = cb.cond(u, t, integ)
 affect!(cb::FunctionCallback, integ::Dynamic{IntegratorView}) = (cb.aff(integ); nothing)
@@ -348,9 +348,8 @@ end
     solve_rhs(f, u0, tspan, Tsit5(), p, callbacks, opts) -> ODESolution
 
 Tsit5 for a plain right-hand side `f(du, u, p, t)`, which enters at its declared signature
-`Callable{RHSSig{P, Float64}, Nothing}`. The bound leaves the mode to the caller: `DynamicCall`
-by default (the solver compiled once per `P`), `CompiledCall` for `compiled_call(f)` (the solver
-compiled for `f`). One method per parameter type the library serves this way: a `Callable`
+`Callable{RHSSig{P, Float64}, Nothing}`. `Dynamic` by default, `Callable`'s (the solver compiled once
+per `P`); `Compiled` for `compiled_for(f)` (the solver compiled for `f`). One method per parameter type the library serves this way: a `Callable`
 bound's signature is a constant.
 """
 solve_rhs(f::Callable{RHSSig{Vector{Float64},Float64},Nothing}, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},

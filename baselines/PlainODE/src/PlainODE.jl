@@ -10,8 +10,8 @@ asserted results; gradients use the same tag labelled by the loss's signature an
 The other routes of TraitDifferentialEquations, written the same way (session 30):
 - a model type that adds a method to `PlainODE.rhs!` (and optionally `jacobian!`): the solver is
   specialized on the model's type, as it is compiled for the implementing type there;
-- `compiled_call(f)`: the function passed unwrapped, so the solver specializes on it (the plain
-  equivalent of `CompiledCall`; nothing checks the signature but the call itself);
+- `compiled_for(f)`: the function passed unwrapped, so the solver specializes on it (the plain
+  equivalent of `Compiled`; nothing checks the signature but the call itself);
 - callback types that add methods to `PlainODE.condition` and `PlainODE.affect!`;
 - Rodas5, with the Jacobian by ForwardDiff at a library-owned tag (two FunctionWrappers) for a
   plain function, and the model's `jacobian!` (finite differences by default) for a model type.
@@ -21,7 +21,7 @@ using FunctionWrappers: FunctionWrapper
 import ForwardDiff
 using PrecompileTools: @compile_workload
 using LinearAlgebra: lu!, ldiv!
-export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, compiled_call, rhs!, jacobian!, condition, affect!
+export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, compiled_for, rhs!, jacobian!, condition, affect!
 
 struct Tsit5 end
 struct Rodas5 end
@@ -73,11 +73,11 @@ struct ModelRHS{M}
 end
 (r::ModelRHS)(du, u, p, t) = (rhs!(r.m, du, u, t); nothing)
 
-"A function the caller asks to be compiled into the solver (the plain form of `compiled_call`)."
+"A function the caller asks to be compiled into the solver (the plain form of `compiled_for`)."
 struct Compiled{F}
     f::F
 end
-compiled_call(f) = Compiled(f)
+compiled_for(f) = Compiled(f)
 primal(x::Float64) = x
 primal(x::AbstractFloat) = Float64(x)
 primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
