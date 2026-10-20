@@ -5,7 +5,7 @@ ODE solvers written in the trait world: the first demonstrator that the trait wo
 Status (session 29, 2026-10-19): **built on the facts+traits compiler and measured.**
 - Runs on julia-1.13 61852d8fb1 with TraitWorld 375a930: Julia's compiler compiles the trait modules by facts, and `Dynamic` operations are call-site splits (part D).
 - The test suite passes there. The scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library.
-- Measured in session 29: "Measured in session 29" below. The design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3 has the same numbers, with the build and the caveats.
+- Measured in session 29 (the build of 2026-10-19): "Measured in session 29" below, this file's dated results. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: the first-call rows from the measurement round of 2026-10-20 (julia-1.13 3b8085c222, TraitWorld bed3782, 2 runs per load order); the run time per step still from the build of 2026-10-19.
 - Not measured yet: PlainODE as the control, route A, compiled mode, and the rest listed below.
 - Built in session 29, correctness first: route A as a user package (`examples/LorenzModels`), a right-hand side as `Callable{…, CompiledCall}`, the user's mistakes at the implementation (example 5 of `../writeup/reviews/2026-10-18-examples-and-demonstrators.md`) and at a wrong signature (example 10), a scripted interactive session (`scripts/session.jl`), and PlainODE equivalents of each (Rodas5, model types, compiled mode, callback types, `baselines/PlainLorenzModels`). Results in "Correctness (session 29)" below.
 - The numbers of sessions 23–27 are under "History (before the facts compiler)". They predate parts (B), (C) and (D) of the compiler.
@@ -96,7 +96,7 @@ Wanted from TraitWorld: refuse a function without a method at `A`, or with a res
 
 ## Measured in session 29
 
-From [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: julia-1.13 61852d8fb1, TraitWorld 375a930, the patched build. `scripts/rows.jl`, fresh processes, *n = 1* per load order; big loads = CSV, DataFrames, CairoMakie. One machine, shared with other jobs.
+A dated table: julia-1.13 61852d8fb1, TraitWorld 375a930 (the build of 2026-10-19), the patched build. `scripts/rows.jl`, fresh processes, *n = 1* per load order; big loads = CSV, DataFrames, CairoMakie. One machine, shared with other jobs. The current numbers, from the round of 2026-10-20: [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §3.
 
 | Row | No loads | Loads before | Loads after |
 |---|---|---|---|
@@ -111,8 +111,8 @@ From [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3: j
 | a `Float32` state, first solve | 0.46 s | 0.45 s | 0.45 s |
 
 - At the start of the phase: a new model type after the loads took 2.0 s and 2.1 s.
-- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms. The first solve is not back at 33–44 ms yet.
-- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without (24 ms in an earlier run): not diagnosed.
+- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms. The first solve is not back at 33–44 ms yet (the round of 2026-10-20: 60–62 / 44–46 ms without loads; `evidence.md` §3).
+- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without (24 ms in an earlier run): not diagnosed. Not reproduced in the round of 2026-10-20 (julia-1.13 3b8085c222): 24.6–24.7 ms after the loads, against 12.6–12.8 ms without (`evidence.md` §3). The remaining difference is open (the design repository's `writeup/open-issues.md` §4.15).
 - The first Tsit5 solve here is a plain function's, not route A's precompiled package (row 1 of the plan).
 
 **Run time per solver step** (row 11; `scripts/runtime.jl`):
