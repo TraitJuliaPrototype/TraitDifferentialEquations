@@ -57,9 +57,13 @@ elsewhere (`Float32` states, gradients, Rodas5) the function runs as a dynamic c
 """
 function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, kw...)
     # not specialized on the function's type: only the function itself is compiled, at its signature
-    u0 = _promote_state(prob.u0, prob.p)
-    return _solve_rhs(prob.f, u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
+    return Base.inferencebarrier(_solve_tsit5)(prob.f, prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
 end
+# A function barrier: compiled per state and parameter type, so the state's promotion is inferred at
+# concrete types. Inferred inside `solve` at an abstract `p`, its dual branch held edges at abstract
+# dual types, which an unrelated package's ForwardDiff extension invalidated.
+_solve_tsit5(@nospecialize(f), u0::Vector, tspan, alg::Tsit5, p, cbs, opts) =
+    _solve_rhs(f, _promote_state(u0, p), tspan, alg, p, cbs, opts)
 _solve_rhs(@nospecialize(f), u0::Vector{Float64}, tspan, alg::Tsit5, p::Union{Nothing,Vector{Float64}}, cbs, opts) =
     solve_rhs(f, u0, tspan, alg, p, cbs, opts)
 _solve_rhs(@nospecialize(f), u0, tspan, alg, p, cbs, opts) = _solve_fm(_function_model(f, p, u0), u0, tspan, alg, p, cbs, opts)
