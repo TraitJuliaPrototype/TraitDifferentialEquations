@@ -58,7 +58,7 @@ The rows (1–13) are defined in the table under "History (before the facts comp
 
 The restructuring around `ODEProblemTrait`, checked for correctness and for gross regressions, not measured: julia-1.13 711484a23e, product setting, one process, load order "none", load 0.5–1.4.
 - The test suite passes (64 checks, 1 broken as before); the session passes in both libraries with identical `RESULT` lines.
-- `scripts/rows.jl none` once, against TDE before W-2 on the same build (`git` main, aac66b7):
+- `scripts/rows.jl none` once, against TDE before W-2 on the same build (aac66b7); logs in `../experiments/checks/logs/w2/`:
 
 | Row | Before W-2 | W-2 |
 |---|---|---|
