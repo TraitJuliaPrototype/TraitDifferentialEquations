@@ -51,16 +51,12 @@ end
     # and the declared result, asserted at the call
     e = caught(() -> solve(ODEProblem(ret!, U0, (0.0, 1.0), P0), Tsit5()))
     @test e isa TypeError && e.expected === Nothing
-    # `Compiled`: the problem type for this function is checked at its first use, and the check
-    # warns that `rhs!` cannot return; then the first call raises the same errors
-    @test_logs (:warn, r"does not conform") match_mode = :any begin
-        e = caught(() -> solve(ODEProblem(compiled_for(oop), U0, (0.0, 1.0), P0), Tsit5()))
+    # `Compiled`: the problem type for this function is a member of the problem family, checked at its
+    # first use and refused, naming `rhs!` at the declared arguments (TraitWorld, traits reference §4.7)
+    for f in (oop, ret!)
+        e = caught(() -> solve(ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0), Tsit5()))
+        @test e isa ImplementError && occursin("does not conform", sprint(showerror, e)) && occursin("`rhs!` at Tuple{ODEProblem{Float64, Vector{Float64}", sprint(showerror, e))
     end
-    @test e isa MethodError && e.f === oop
-    @test_logs (:warn, r"does not conform") match_mode = :any begin
-        e = caught(() -> solve(ODEProblem(compiled_for(ret!), U0, (0.0, 1.0), P0), Tsit5()))
-    end
-    @test e isa TypeError && e.expected === Nothing
-    # wanted (TraitWorld): both refused at the entry, naming the function and the declared signature
-    @test_broken caught(() -> solve(ODEProblem(compiled_for(oop), U0, (0.0, 1.0), P0), Tsit5())) isa TraitBoundError
+    # wanted (TraitWorld): `Dynamic` refused at the entry too, naming the function and the declared signature
+    @test_broken caught(() -> solve(ODEProblem(oop, U0, (0.0, 1.0), P0), Tsit5())) isa TraitBoundError
 end

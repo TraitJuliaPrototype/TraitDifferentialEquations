@@ -6,7 +6,7 @@ Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 71148
 
 **How it is built (keys):**
 - **`ODEProblemTrait{T, P}`:** declared fields `u0::Vector{T}`, `tspan`, `p::P`; operations `rhs!(prob, du, u, t)` and `jacobian!(prob, J, u, t)` (default: finite differences of `rhs!`). The solver is compiled for what the bound sees: the problem's type.
-- **TDE's `ODEProblem{T, P, F, D}`** (`ODEProblem(f, u0, tspan, p)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §10.5), so the constructor applies the bound and the caller's cast:
+- **TDE's `ODEProblem{T, P, F, D}`** (`ODEProblem(f, u0, tspan, p)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §7.4), so the constructor applies the bound and the caller's cast:
   - `Dynamic{Callable{RHSSig{P, T}, Nothing}}` by default (`Callable`'s): `F` is the same type for every function, so the solver compiles once per state and parameter type, never per function;
   - under `ODEProblem(compiled_for(f), …)` the function itself: the solver compiles for `f`, with `f` inferred into it, and its result still checked at every call. For every state and parameter type, Rodas5 and gradients included.
   - It keeps the function at the library's dual numbers too (`fd::D`, `D <: Callable{DualSig{P, 8}, Nothing}`: the same function, with the same attribute; a `Dynamic` one's pointer is made at its first call), and for a `Float64` state its `jacobian!` is by ForwardDiff's `Dual` under the library's tag, in chunks of 8 columns. The chunk is fixed, so it is no part of the problem's type: a solver compiled per state length would be the alternative. A `Dynamic{Callable}` the user made at one signature is the same function at the duals.
@@ -103,7 +103,9 @@ Since TraitWorld 3ba6c05, the messages of (b) and (c′) name `rhs!` and the dec
 | `Float32` state, Rodas5, gradient | — | no compiled entry: runs dynamic, identical values |
 | a function redefined at the prompt | the next solve uses the new definition | the same (the compiled solver is recompiled: the function's owner changed a fact) |
 
-Wanted from TraitWorld: refuse a function without a method at `A`, or with a result disjoint from `S`, at the entry in both modes (a `@test_broken` in `test/compiledcall.jl`).
+Since TraitWorld's member check (2026-10-21, W-23), the `Compiled` column's two errors are an `ImplementError` at the problem's first use: the problem type is a member of the problem family that does not conform, and the message names `rhs!` at the declared arguments (`test/compiledcall.jl`).
+
+Wanted from TraitWorld: refuse such a function at the entry with `Dynamic` too (a `@test_broken` in `test/compiledcall.jl`).
 
 **The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 10 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
 
