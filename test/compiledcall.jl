@@ -19,6 +19,7 @@ end
     S = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}
     @test solve(ODEProblem(Dynamic{Callable{S,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u == solve(prob, Tsit5()).u
     @test solve(ODEProblem(with_dynamic(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u == solve(prob, Tsit5()).u
+    @test solve(ODEProblem(with_dynamic(lorenz!), U0, (0.0, 1.0), P0), Rodas5()).u == solve(prob, Rodas5()).u   # the Jacobian at the duals, Dynamic too
     # a closure with captured state, and a problem without parameters
     k = 0.5
     s0 = solve(ODEProblem(compiled_for((du, u, p, t) -> (du .= -k .* u; nothing)), [1.0], (0.0, 1.0)), Tsit5(); abstol = 1e-10, reltol = 1e-10)

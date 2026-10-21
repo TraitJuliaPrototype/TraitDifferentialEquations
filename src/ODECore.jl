@@ -12,7 +12,7 @@ using TraitWorld
 using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, CondSig, AffectSig, FDual, ODETag
+       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -84,37 +84,35 @@ const FDual{N} = ForwardDiff.Dual{ODETag,Float64,N}
 "The signature of a plain right-hand side at the library's duals."
 const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 
+"The chunk of the Jacobian's dual numbers: fixed, so that it is no part of a problem's type (a last chunk may be partial)."
+const DUAL_CHUNK = 8
+
 """
-    ODEProblem{T, P, R}
+    ODEProblem{T, P, R, D}
 
 TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain right-hand side
-`f(du, u, p, t)`, an initial state, a time span and parameters. The function is kept at its
-declared signature `RHSSig{P, T}` as `stored` gives it (`R`): a `Dynamic{Callable{…}}` by default,
-so the solver compiles once per `(T, P)`, or the function itself under `compiled_for(f)`, so the
-solver compiles per function. A plain function kept `Dynamic` is kept as given too (`fn`), for the
-Jacobian's dual numbers; a stored `Dynamic{Callable}` declares one signature, so its Jacobian is by
-finite differences.
+`f(du, u, p, t)`, an initial state, a time span and parameters. The function is kept as `stored`
+gives it, at two signatures:
+- `f::R` at `RHSSig{P, T}`: a `Dynamic{Callable{…}}` by default, so the solver compiles once per
+  `(T, P)`, or the function itself under `compiled_for(f)`, so the solver compiles per function;
+- `fd::D` at the library's dual numbers `DualSig{P, DUAL_CHUNK}`, for the Jacobian of a `Float64`
+  state, alike; `Nothing` for another state, and for a stored `Dynamic{Callable}` given by the user,
+  which declares one signature (its Jacobian is then by finite differences).
 """
-struct ODEProblem{T,P,R}
+struct ODEProblem{T,P,R,D}
     f::R
     u0::Vector{T}
     tspan::Tuple{Float64,Float64}
     p::P
-    fn::Any
+    fd::D
 end
 rhs!(prob::ODEProblem{T,P}, du::Vector{T}, u::Vector{T}, t::Float64) where {T,P} = (prob.f(du, u, prob.p, t)::Nothing; nothing)
-"The Jacobian by ForwardDiff's duals (a `Float64` state), in chunks of up to 8 columns."
-jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) =
-    (ad_jacobian!(prob, J, u, t, Val(min(length(u), 8)))::Nothing; nothing)    # a function barrier on the chunk
-jacobian!(prob::ODEProblem{T}, J::Matrix{T}, u::Vector{T}, t::Float64) where {T} = fd_jacobian!(prob, J, u, t)
-"""
-The Jacobian at chunk `N`: one call per chunk of `N` columns, of the function at the library's dual
-numbers, `DualSig{P, N}`: as `stored` keeps it at that signature, so `Dynamic` where the problem's
-function is, and the function itself where it is compiled.
-"""
-function ad_jacobian!(prob::ODEProblem{Float64,P,R}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64, ::Val{N}) where {P,R,N}
-    R <: Dynamic && prob.fn === nothing && return fd_jacobian!(prob, J, u, t)    # a stored function: its one signature
-    fd = R <: Dynamic ? Dynamic{Callable{DualSig{P,N},Nothing}}(prob.fn) : prob.f
+"The Jacobian: by ForwardDiff's duals where the function is kept at them, by finite differences otherwise."
+jacobian!(prob::ODEProblem{T,P,R,D}, J::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,R,D} =
+    T === Float64 && D !== Nothing ? ad_jacobian!(prob, J, u, t) : fd_jacobian!(prob, J, u, t)
+"The Jacobian by duals: one call of the function at the duals per chunk of `DUAL_CHUNK` columns."
+function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
+    N = DUAL_CHUNK
     n = length(u)
     ud = Vector{FDual{N}}(undef, n)
     dd = Vector{FDual{N}}(undef, n)
@@ -122,7 +120,7 @@ function ad_jacobian!(prob::ODEProblem{Float64,P,R}, J::Matrix{Float64}, u::Vect
         for j in 1:n
             ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
         end
-        fd(dd, ud, prob.p, t)::Nothing
+        prob.fd(dd, ud, prob.p, t)::Nothing
         for k in 1:N
             col = c0 + k - 1
             col > n && break
@@ -133,7 +131,7 @@ function ad_jacobian!(prob::ODEProblem{Float64,P,R}, J::Matrix{Float64}, u::Vect
     end
     return nothing
 end
-@implement ODEProblemTrait{T,P} ODEProblem{T,P,R} where {T,P,R}
+@implement ODEProblemTrait{T,P} ODEProblem{T,P,R,D} where {T,P,R,D}
 
 "A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
 struct FunctionCallback

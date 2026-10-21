@@ -16,7 +16,7 @@ using TraitWorld
 import ForwardDiff
 include("ODECore.jl")
 using .ODECore
-using .ODECore: RHSSig, DualSig, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual
+using .ODECore: RHSSig, DualSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual
 export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!, Callback, condition,
        affect!, IntegratorView
 
@@ -36,10 +36,9 @@ Base.@nospecializeinfer ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector,
     _problem(f, _promote_state(_state(u0), p), (Float64(tspan[1]), Float64(tspan[2])), p)
 function _problem(@nospecialize(f), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P) where {T,P}
     r = stored(Callable{RHSSig{P,T},Nothing}, f)
-    # the function as given, for the Jacobian's dual numbers: only where it is kept `Dynamic` from a
-    # plain function (a stored `Dynamic{Callable}` declares one signature; a compiled one is `r` itself)
-    fn = r isa Dynamic && !(f isa Dynamic) ? f : nothing
-    return ODECore.ODEProblem{T,P,typeof(r)}(r, u0, tspan, p, fn)
+    # at the duals for the Jacobian: a stored `Dynamic{Callable}` from the user declares one signature
+    d = T === Float64 && !(f isa Dynamic) ? stored(Callable{DualSig{P,DUAL_CHUNK},Nothing}, f) : nothing
+    return ODECore.ODEProblem{T,P,typeof(r),typeof(d)}(r, u0, tspan, p, d)
 end
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)

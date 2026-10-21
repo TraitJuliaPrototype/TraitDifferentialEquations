@@ -3,8 +3,8 @@
 
 A user package: a problem type and two callbacks written as trait-world code, conforming to
 TraitDifferentialEquations' traits `ODEProblemTrait` and `Callback`. The solver is compiled for
-these types in this package's image (the workload below); the user's session compiles nothing
-for them. The same package without traits is `baselines/PlainLorenzModels`.
+these types in this package's image (the workload below); what a user's session then still
+compiles for them is W-8's measurement. The same package without traits is `baselines/PlainLorenzModels`.
 
 A package is an ordinary module around its trait module (`Models`): `@trait_module` is not in
 scope at a package's top level, before `using TraitWorld`.
