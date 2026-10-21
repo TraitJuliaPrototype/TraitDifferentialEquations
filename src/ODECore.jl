@@ -94,7 +94,7 @@ const DUAL_CHUNK = 8
 
 TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain right-hand side
 `f(du, u, p, t)`, an initial state, a time span and parameters. The function is kept at two
-parameters bounded by `Callable` (traits reference §10.5), each the function as its bound gives it:
+parameters bounded by `Callable` (traits reference §7.4), each the function as its bound gives it:
 the function itself under `compiled_for(f)`, so the solver compiles per function; a
 `Dynamic{Callable{…}}` otherwise (`Callable`'s default, and `with_dynamic`), so it compiles once per
 `(T, P)`:

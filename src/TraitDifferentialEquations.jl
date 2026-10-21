@@ -34,7 +34,7 @@ the solver is compiled for it, with `f` inferred into it and its result checked 
 # neither specialized nor inferred on the function: only the function itself is compiled, at its signature
 Base.@nospecializeinfer ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing) =
     _problem(f, _promote_state(_state(u0), p), (Float64(tspan[1]), Float64(tspan[2])), p)
-# the function at both of the problem's bounds: its attribute decides its form at each (traits reference §10.5)
+# the function at both of the problem's bounds: its attribute decides its form at each (traits reference §7.4)
 _problem(@nospecialize(f), u0::Vector, tspan::Tuple{Float64,Float64}, p) = ODECore.ODEProblem(f, u0, tspan, p, f)
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
