@@ -62,7 +62,7 @@ end
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
     jacobian!(prob, J, u, 0.0)
     @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
-    # the same through the compiled function, and by finite differences for a stored function of one signature
+    # the same through the compiled function, and through a function the user made `Dynamic` at one signature (the same function at the duals)
     jacobian!(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), J, u, 0.0)
     @test J ≈ [-10.0 10.0 0.0; 28.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
     S = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}

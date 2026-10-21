@@ -40,9 +40,11 @@ end
 @testset "Compiled: a wrong signature is refused" begin
     oop(u, p, t) = -u                       # SciML's out-of-place form: no method at the declared arguments
     ret!(du, u, p, t) = (du .= -u)          # returns du, not nothing
-    # a stored function of another signature: refused when the problem is made
-    e = caught(() -> solve(ODEProblem(Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()))
-    @test e isa TraitBoundError && occursin("Callable{Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}, Nothing}", sprint(showerror, e))
+    # a `Dynamic` function made at another signature is the same function at the problem's: Dynamic there
+    @test solve(ODEProblem(Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u ==
+          solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5()).u
+    # a constructor never casts: a `compiled_for` function cannot be made a `Dynamic{Callable}`
+    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa TraitBoundError
     # `Dynamic`: refused at the first call, as a MethodError for the declared arguments
     e = caught(() -> solve(ODEProblem(oop, U0, (0.0, 1.0), P0), Tsit5()))
     @test e isa MethodError && e.f === oop && typeof(e.args) == Tuple{Vector{Float64},Vector{Float64},Vector{Float64},Float64}

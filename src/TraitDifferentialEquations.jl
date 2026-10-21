@@ -26,20 +26,16 @@ export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution
 A problem in SciML's form: `f(du, u, p, t)` in place, an initial state, a time span, parameters.
 The state keeps its element type (`Float32` stays `Float32`), or takes the parameters' dual type
 for a gradient in `p`, as SciML promotes it. The function enters at its declared signature
-`(Vector{T}, Vector{T}, P, Float64) -> Nothing`: `Dynamic` by default (`Callable`'s), so the
-solver's code is compiled once per state and parameter type, never per function;
-`ODEProblem(compiled_for(f), …)` keeps the function itself, so the solver is compiled for it, with
-`f` inferred into it and its result still checked at every call.
+`(Vector{T}, Vector{T}, P, Float64) -> Nothing`, and at the library's dual numbers for the
+Jacobian: `Dynamic` by default (`Callable`'s), so the solver's code is compiled once per state and
+parameter type, never per function; `ODEProblem(compiled_for(f), …)` keeps the function itself, so
+the solver is compiled for it, with `f` inferred into it and its result checked at every call.
 """
 # neither specialized nor inferred on the function: only the function itself is compiled, at its signature
 Base.@nospecializeinfer ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing) =
     _problem(f, _promote_state(_state(u0), p), (Float64(tspan[1]), Float64(tspan[2])), p)
-function _problem(@nospecialize(f), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P) where {T,P}
-    r = stored(Callable{RHSSig{P,T},Nothing}, f)
-    # at the duals for the Jacobian: a stored `Dynamic{Callable}` from the user declares one signature
-    d = T === Float64 && !(f isa Dynamic) ? stored(Callable{DualSig{P,DUAL_CHUNK},Nothing}, f) : nothing
-    return ODECore.ODEProblem{T,P,typeof(r),typeof(d)}(r, u0, tspan, p, d)
-end
+# the function at both of the problem's bounds: its attribute decides its form at each (traits reference §10.5)
+_problem(@nospecialize(f), u0::Vector, tspan::Tuple{Float64,Float64}, p) = ODECore.ODEProblem(f, u0, tspan, p, f)
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)
@@ -49,11 +45,11 @@ _promote_state(u0::Vector, p) = u0
 
 "A discrete callback from two plain functions: `condition(u, t, integ)::Bool` and `affect!(integ)`."
 DiscreteCallback(condition, affect!) =
-    FunctionCallback(Dynamic{Callable{CondSig,Bool}}(condition), Dynamic{Callable{AffectSig,Nothing}}(affect!))
+    FunctionCallback(Kept{Callable{CondSig,Bool}}(condition), Kept{Callable{AffectSig,Nothing}}(affect!))
 
-_kept(::Nothing) = Dynamic{Callback}[]
-_kept(cb) = Dynamic{Callback}[keep_callback(cb)]
-_kept(cbs::Union{Tuple,AbstractVector}) = Dynamic{Callback}[keep_callback(cb) for cb in cbs]
+_kept(::Nothing) = Kept{Callback}[]
+_kept(cb) = Kept{Callback}[keep_callback(cb)]
+_kept(cbs::Union{Tuple,AbstractVector}) = Kept{Callback}[keep_callback(cb) for cb in cbs]
 
 _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[]) =
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)))
