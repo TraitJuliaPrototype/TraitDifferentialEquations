@@ -17,7 +17,7 @@ using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
-       no_jacobian
+       no_jacobian, UserFunction
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -101,6 +101,12 @@ const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 "The chunk of the Jacobian's dual numbers: fixed, so that it is no part of a problem's type (a last chunk may be partial)."
 const DUAL_CHUNK = 8
 
+"The user's function as given, its type hidden: what a problem keeps beside the kept forms."
+struct UserFunction
+    f::Any
+    UserFunction(@nospecialize(f)) = new(f)
+end
+
 """
     ODEProblem{T, P, F, D, J}
 
@@ -118,8 +124,9 @@ compiles once per `(T, P)`:
 - `jac::J` at `JacSig{P, T}`, the given Jacobian; without one, the library's `no_jacobian`, kept
   compiled, so `jacobian!` folds on `J`.
 - `fplain`, the user's function as given, beside the kept ones (`rhs_function`): a solver that picks
-  its own dual chunk enters it at its `init` (Rodas5's `chunk_size`).
-Made by `ODEProblem(f, u0, tspan, p, f, jac, f)`; the front end `ODEProblem(f, u0, tspan, p)` does that.
+  its own dual chunk enters it at its `init` (Rodas5's `chunk_size`). Held in a `UserFunction`, so
+  that no constructor is specialized on the function's type.
+Made by `ODEProblem(f, u0, tspan, p, f, jac, UserFunction(f))`; the front end `ODEProblem(f, u0, tspan, p)` does that.
 """
 struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUAL_CHUNK},Nothing},J<:Callable{JacSig{P,T},Nothing}}
     f::F
@@ -128,7 +135,7 @@ struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUA
     p::P
     fd::D
     jac::J
-    fplain::Any
+    fplain::UserFunction
 end
 "No Jacobian given: the library's own marker at `ODEProblem`'s `J` (never called)."
 no_jacobian(J, u, p, t) = nothing
@@ -139,7 +146,7 @@ jacobian!(prob::ODEProblem{T,P,F,D,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) 
     J === NoJacobian ? (T === Float64 ? ad_jacobian!(prob, Jm, u, t) : fd_jacobian!(prob, Jm, u, t)) :
     (prob.jac(Jm, u, prob.p, t)::Nothing; nothing)
 "The user's function, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
-rhs_function(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J} = J === NoJacobian ? prob.fplain : nothing
+rhs_function(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J} = J === NoJacobian ? prob.fplain.f : nothing
 "The Jacobian by duals: one call of the function at the duals per chunk of `DUAL_CHUNK` columns."
 function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
     N = DUAL_CHUNK
@@ -228,7 +235,7 @@ function at(s::ODESolution{T}, τ::Float64) where {T}
     (isempty(ts) || τ < ts[1] || τ > ts[end]) && throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
     k = searchsortedlast(ts, τ)
     k == length(ts) && return copy(s.u[k])
-    θ = (τ - ts[k]) / (ts[k+1] - ts[k])
+    θ = T((τ - ts[k]) / (ts[k+1] - ts[k]))            # at the state's element type: a Float32 state stays Float32
     return (1 - θ) .* s.u[k] .+ θ .* s.u[k+1]
 end
 @implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}

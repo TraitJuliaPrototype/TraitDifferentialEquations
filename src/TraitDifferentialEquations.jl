@@ -18,7 +18,7 @@ using LinearAlgebra: I, UniformScaling
 include("ODECore.jl")
 using .ODECore
 using .ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual,
-                no_jacobian
+                no_jacobian, UserFunction
 export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory
 
@@ -67,8 +67,8 @@ end
 # the function at the problem's bounds: its attribute decides its form at each (traits reference §7.4);
 # the function as given beside them, for a solver that enters it at its own chunk
 _problem(@nospecialize(f), @nospecialize(jac), u0::Vector, tspan::Tuple{Float64,Float64}, p) =
-    jac === nothing ? ODECore.ODEProblem(f, u0, tspan, p, f, compiled_for(no_jacobian), f) :
-                      ODECore.ODEProblem(f, u0, tspan, p, f, jac, f)
+    jac === nothing ? ODECore.ODEProblem(f, u0, tspan, p, f, compiled_for(no_jacobian), UserFunction(f)) :
+                      ODECore.ODEProblem(f, u0, tspan, p, f, jac, UserFunction(f))
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)

@@ -6,14 +6,18 @@ Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 71148
 
 **How it is built (keys):**
 - **`ODEProblemTrait{T, P}`:** declared fields `u0::Vector{T}`, `tspan`, `p::P`; operations `rhs!(prob, du, u, t)` and `jacobian!(prob, J, u, t)` (default: finite differences of `rhs!`). The solver is compiled for what the bound sees: the problem's type.
-- **TDE's `ODEProblem{T, P, F, D}`** (`ODEProblem(f, u0, tspan, p)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §7.4), so the constructor applies the bound and the caller's cast:
+- **`ODEFunction(f; jac, mass_matrix)`,** SciML's plain record of the user's functions (branch `w34`). It has no parameter for the state's or the parameters' type; the problem enters its functions at its bounded parameters. The solvers take the identity mass matrix only.
+- **TDE's `ODEProblem{T, P, F, D, J}`** (`ODEProblem(f, u0, tspan, p)`, or `ODEProblem(ODEFunction(f; jac), …)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §7.4), so the constructor applies the bound and the caller's cast:
   - `Dynamic{Callable{RHSSig{P, T}, Nothing}}` by default (`Callable`'s): `F` is the same type for every function, so the solver compiles once per state and parameter type, never per function;
   - under `ODEProblem(compiled_for(f), …)` the function itself: the solver compiles for `f`, with `f` inferred into it, and its result still checked at every call. For every state and parameter type, Rodas5 and gradients included.
   - It keeps the function at the library's dual numbers too (`fd::D`, `D <: Callable{DualSig{P, 8}, Nothing}`: the same function, with the same attribute; a `Dynamic` one's pointer is made at its first call), and for a `Float64` state its `jacobian!` is by ForwardDiff's `Dual` under the library's tag, in chunks of 8 columns. The chunk is fixed, so it is no part of the problem's type: a solver compiled per state length would be the alternative. A `Dynamic{Callable}` the user made at one signature is the same function at the duals.
+  - A given Jacobian is kept at `J <: Callable{JacSig{P, T}, Nothing}` (branch `w34`); without one, `J` is the library's `no_jacobian`, so `jacobian!` folds on it. The function as given is kept beside (`rhs_function`, an operation of the trait with the default `nothing`).
+  - **The chunk per problem** (branch `w34`): `Rodas5(chunk_size = 0)` enters the problem's plain function at its `init`, at the duals of a chunk picked from the state's length (`DualJacobian{P, N, FD}`, `FD` bounded by `Callable{DualSig{P, N}, Nothing}`), so the driver is compiled per chunk, not the problem. `Rodas5()` keeps the problem's `jacobian!`.
   - Callbacks are kept with their attribute (`Vector{Callback}`): `Dynamic` by default, `compiled_for(cb)` persists.
   - The state keeps its element type, or takes the parameters' dual type for a gradient in `p`, as SciML promotes it.
 - **A problem type of one's own** implements `rhs!` (and `jacobian!` if it can do better) and has the declared fields: `@implement ODEProblemTrait MyProblem`. The solver compiles for it, in the image of the package that declares the implementation (`examples/LorenzModels`: `LorenzProblem{T}` with its own buffer and Jacobian, its parameters a mutable `LorenzParams{T}`, workload in the package). Callbacks see its `p` as `integ.p`.
 - **`solve(prob, alg; callback, saveat, abstol, reltol, dtmax, maxiters)`:** a front end neither specialized nor inferred on the problem's type (`@nospecializeinfer`), so a caller's code does not infer the solver again, and behind it a function barrier compiled per problem type.
+- **`Trajectory{U, T}`** (branch `w34`): `times`, `state`, `at`; `ODESolution{T}` is a `Trajectory{Vector{T}, Float64}` for every problem, so code over solutions is compiled per state and time type.
 - `IntegratorView{T, P}`: fields only (`u`, `t`, `p`, `u_modified`, `terminated`), so there is no receiver type; callbacks see the integrator as a `Dynamic{IntegratorView}`.
 - `Callback`: kept as `Dynamic{Callback}`; `DiscreteCallback(condition, affect!)` from plain functions is the library's `FunctionCallback` of two `Dynamic{Callable{…}}`s; a callback type conforms (`Bounce`, `RaiseSigma` in `LorenzModels`; a new one at the prompt in `scripts/session.jl`). A limit of the design: the callback operations take `integ::Dynamic{IntegratorView}` without parameters, so a callback that reads the problem's parameters asserts their type, `integ.p::LorenzParams{Float64}`.
 - Gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`), with a guard for closures that capture duals.
@@ -54,6 +58,12 @@ The rows (1–13) are defined in the table under "History (before the facts comp
 - row 9 is caught early for models written as trait-world code;
 - row 11 stays within its bounds;
 - row 12 runs.
+
+## Branch `w34`: move 1 in form B (E-157, 2026-10-22)
+
+W-34's move 1 ([the plan](../writeup/plans/2026-10-21-w34-sciml-prerequisites.md) §2.2): SciML's split of a plain `ODEFunction` record and a problem with bounded `Callable` parameters, a given Jacobian, the dual chunk picked per problem at Rodas5's `init`, a callable model from a package that knows nothing of the solvers (`examples/ChainModels`: `ChainModel{G}`, a diffusion on a graph of type `G`), and `Trajectory{U, T}`. The existing API is unchanged; `test/w34.jl` tests the new pieces.
+
+How to run the experiment's checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-157 (scripts and logs in `../experiments/w34-sciml/m1/`). In brief (julia-1.13 2943086604, TraitWorld c655dde, product setting, strict mode off): the session's `RESULT` lines are identical to `main`'s on both chunk paths; a new graph type or function compiles no CodeInstance of the solver's functions; a Tsit5 step allocates nothing, except for a parameter that is an immutable non-bits value (a named tuple holding a vector), which is boxed at every `Dynamic` call.
 
 ## Checked in W-2 (2026-10-21)
 

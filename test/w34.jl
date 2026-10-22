@@ -61,4 +61,7 @@ end
     sc = solve(ODEProblem(ChainModel(PathGraph(40)), u0, (0.0, 1.0), [1.0, 0.1]), Tsit5())
     @test typeof(s) === typeof(sc) === typeof(solve(Lorenz3(U0, (0.0, 1.0), P0), Tsit5())) === ODESolution{Float64}
     @test Dynamic{Trajectory{Vector{Float64},Float64}}(s) isa Dynamic
+    # a Float32 state: `at` stays at Float32 (the member check refuses `Vector{Float64}` there)
+    s32 = solve(ODEProblem(lorenz!, Float32.(U0), (0.0, 1.0), Float32.(P0)), Tsit5())
+    @test ODECore.at(s32, 0.5) isa Vector{Float32}
 end
