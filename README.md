@@ -65,6 +65,12 @@ W-34's move 1 ([the plan](../writeup/plans/2026-10-21-w34-sciml-prerequisites.md
 
 How to run the experiment's checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-157 (scripts and logs in `../experiments/w34-sciml/m1/`). In brief (julia-1.13 2943086604, TraitWorld c655dde, product setting, strict mode off): the session's `RESULT` lines are identical to `main`'s on both chunk paths; a new graph type or function compiles no CodeInstance of the solver's functions; a Tsit5 step allocates nothing, except for a parameter that is an immutable non-bits value (a named tuple holding a vector), which is boxed at every `Dynamic` call.
 
+## Branch `w34`: move 2, callbacks and the integrator view (E-158, 2026-10-22)
+
+W-34's move 2 ([the plan](../writeup/plans/2026-10-21-w34-sciml-prerequisites.md) §2.3): `IntegratorView{U, T, P}` with `add_tstop!`, `terminate!` and `interp!`; `Callback{U, T, P}` and `EventCallback{U, T, P}`; `DiscreteCallback` and `ContinuousCallback` plain records entered at a solver's `init` at the problem's types, kept in vectors of the integrator; tstops and continuous events (bisection on `interp!`) in Tsit5. `baselines/PlainODE` has the same driver with typed callbacks (`solve_typed`), the control. Callback types state the problem's types (`LorenzModels`, `scripts/session.jl`); the front end's API is unchanged. `test/w34_move2.jl` tests the new pieces.
+
+How to run the experiment's checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-158 (scripts and logs in `../experiments/w34-sciml/m2/`). In brief (julia-1.13 2943086604, TraitWorld 2e9ed68, product setting, strict mode off): the session's `RESULT` lines are identical to `main`'s; event times and states are identical to the control's bit for bit, discrete and continuous; a new callback compiles nothing in the driver, and the integrator's type is the same for any callbacks; `integ.p` is typed. Two callbacks cost about 1.4 µs and 1 KB per step while the callback records and the integrators are families (lowering L-37), about 35 ns and 32 B with the members declared on their own (the view boxed per call, open issues §4 item 35).
+
 ## Checked in W-2 (2026-10-21)
 
 The restructuring around `ODEProblemTrait`, checked for correctness and for gross regressions, not measured: julia-1.13 711484a23e, product setting, one process, load order "none", load 0.5–1.4.
