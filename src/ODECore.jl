@@ -8,13 +8,16 @@
 #     solver compiles per function;
 #   - callbacks are kept with their attribute (`Vector{Callback}`) and see the integrator as a
 #     `Dynamic{IntegratorView}`, so a new callback compiles nothing in the solver unless the caller
-#     casts it with `compiled_for`.
+#     casts it with `compiled_for`;
+#   - a solution is a `Trajectory{U, T}`: code over solutions is compiled per state and time type,
+#     whatever the model.
 @trait_module module ODECore
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
-export ODEProblemTrait, rhs!, jacobian!, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag
+export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
+       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
+       no_jacobian
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -22,7 +25,13 @@ export ODEProblemTrait, rhs!, jacobian!, Callback, condition, affect!, Integrato
 What the solver needs from a problem: its initial state, time span and parameters, the right-hand
 side in place at element type `T`, and its Jacobian in `u` (for implicit methods). The default
 Jacobian is by finite differences of `rhs!`; a problem that can do better implements it (TDE's
-`ODEProblem` does, with ForwardDiff's duals). `p` is what callbacks see as `integ.p`.
+`ODEProblem` does: the given Jacobian, else ForwardDiff's duals). `p` is what callbacks see as
+`integ.p`.
+
+`rhs_function(prob)` is the user's right-hand side `f(du, u, p, t)` as a plain value, for a solver
+that enters it at a signature of its own choosing (Rodas5 at the duals of a chunk picked from the
+state's length, at its `init`); `nothing` (the default) when the problem has no such function or
+brings its own Jacobian, and the solver calls `jacobian!`.
 """
 @trait ODEProblemTrait{T, P} begin
     @const u0::Vector{T}
@@ -30,6 +39,7 @@ Jacobian is by finite differences of `rhs!`; a problem that can do better implem
     @const p::P
     rhs!(prob::ODEProblemTrait{T, P}, du::Vector{T}, u::Vector{T}, t::Float64)::Nothing
     jacobian!(prob::ODEProblemTrait{T, P}, J::Matrix{T}, u::Vector{T}, t::Float64)::Nothing = fd_jacobian!(prob, J, u, t)
+    rhs_function(prob::ODEProblemTrait{T, P})::Any = nothing
 end
 
 "The default Jacobian: forward differences of `rhs!` (an internal function: `prob` is a trait object, or a problem itself)."
@@ -72,6 +82,8 @@ end
 
 "The signature of a plain right-hand side `f(du, u, p, t)`, at element type `T` (`Float64`, or dual numbers for gradients through `solve`)."
 const RHSSig{P,T} = Tuple{Vector{T},Vector{T},P,Float64}
+"The signature of a plain Jacobian `jac(J, u, p, t)` (SciML's `ODEFunction(f; jac)`), at element type `T`."
+const JacSig{P,T} = Tuple{Matrix{T},Vector{T},P,Float64}
 const CondSig = Tuple{Vector{Float64},Float64,Dynamic{IntegratorView}}
 const AffectSig = Tuple{Dynamic{IntegratorView}}
 
@@ -90,30 +102,44 @@ const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 const DUAL_CHUNK = 8
 
 """
-    ODEProblem{T, P, R, D}
+    ODEProblem{T, P, F, D, J}
 
 TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain right-hand side
-`f(du, u, p, t)`, an initial state, a time span and parameters. The function is kept at two
-parameters bounded by `Callable` (traits reference §7.4), each the function as its bound gives it:
-the function itself under `compiled_for(f)`, so the solver compiles per function; a
-`Dynamic{Callable{…}}` otherwise (`Callable`'s default, and `with_dynamic`), so it compiles once per
-`(T, P)`:
+`f(du, u, p, t)`, an initial state, a time span, parameters, and optionally a Jacobian
+`jac(J, u, p, t)` (SciML's split: the user's functions come in a plain record, `ODEFunction`, which
+has no parameter for `u`'s or `p`'s type; the problem has them, and enters the functions at its
+bounded parameters). Each function is kept at a parameter bounded by `Callable` (traits reference
+§7.4), as its bound gives it: the function itself under `compiled_for(f)`, so the solver compiles
+per function; a `Dynamic{Callable{…}}` otherwise (`Callable`'s default, and `with_dynamic`), so it
+compiles once per `(T, P)`:
 - `f::F` at `RHSSig{P, T}`;
 - `fd::D` at the library's dual numbers `DualSig{P, DUAL_CHUNK}`, for the Jacobian of a `Float64`
-  state (a `Dynamic` one's pointer is made at its first call).
-Made by `ODEProblem(f, u0, tspan, p, f)`; the front end `ODEProblem(f, u0, tspan, p)` does that.
+  state (a `Dynamic` one's pointer is made at its first call);
+- `jac::J` at `JacSig{P, T}`, the given Jacobian; without one, the library's `no_jacobian`, kept
+  compiled, so `jacobian!` folds on `J`.
+- `fplain`, the user's function as given, beside the kept ones (`rhs_function`): a solver that picks
+  its own dual chunk enters it at its `init` (Rodas5's `chunk_size`).
+Made by `ODEProblem(f, u0, tspan, p, f, jac, f)`; the front end `ODEProblem(f, u0, tspan, p)` does that.
 """
-struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUAL_CHUNK},Nothing}}
+struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUAL_CHUNK},Nothing},J<:Callable{JacSig{P,T},Nothing}}
     f::F
     u0::Vector{T}
     tspan::Tuple{Float64,Float64}
     p::P
     fd::D
+    jac::J
+    fplain::Any
 end
+"No Jacobian given: the library's own marker at `ODEProblem`'s `J` (never called)."
+no_jacobian(J, u, p, t) = nothing
+const NoJacobian = typeof(no_jacobian)
 rhs!(prob::ODEProblem{T,P}, du::Vector{T}, u::Vector{T}, t::Float64) where {T,P} = (prob.f(du, u, prob.p, t)::Nothing; nothing)
-"The Jacobian: by ForwardDiff's duals for a `Float64` state, by finite differences otherwise."
-jacobian!(prob::ODEProblem{T}, J::Matrix{T}, u::Vector{T}, t::Float64) where {T} =
-    T === Float64 ? ad_jacobian!(prob, J, u, t) : fd_jacobian!(prob, J, u, t)
+"The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state, by finite differences otherwise."
+jacobian!(prob::ODEProblem{T,P,F,D,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,D,J} =
+    J === NoJacobian ? (T === Float64 ? ad_jacobian!(prob, Jm, u, t) : fd_jacobian!(prob, Jm, u, t)) :
+    (prob.jac(Jm, u, prob.p, t)::Nothing; nothing)
+"The user's function, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
+rhs_function(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J} = J === NoJacobian ? prob.fplain : nothing
 "The Jacobian by duals: one call of the function at the duals per chunk of `DUAL_CHUNK` columns."
 function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
     N = DUAL_CHUNK
@@ -135,7 +161,7 @@ function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{F
     end
     return nothing
 end
-@implement ODEProblemTrait{T,P} ODEProblem{T,P,F,D} where {T,P,F,D}
+@implement ODEProblemTrait{T,P} ODEProblem{T,P,F,D,J} where {T,P,F,D,J}
 
 "A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
 struct FunctionCallback
@@ -152,7 +178,17 @@ keep_callback(cb::Callback) = Kept{Callback}(cb)
 # --- options, solution, the integrator ---------------------------------------------------------
 
 struct Tsit5 end
-struct Rodas5 end
+"""
+    Rodas5(; chunk_size = nothing)
+
+Rodas5 with the problem's `jacobian!` (`chunk_size = nothing`: TDE's `ODEProblem` by duals in chunks
+of `DUAL_CHUNK`), or with the problem's plain function (`rhs_function`) entered at `init` at the duals
+of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`).
+"""
+struct Rodas5
+    chunk_size::Union{Nothing,Int}
+end
+Rodas5(; chunk_size = nothing) = Rodas5(chunk_size)
 
 struct SolverOptions
     abstol::Float64
@@ -170,6 +206,32 @@ struct ODESolution{T}
     nreject::Int
     nf::Int
 end
+
+"""
+    Trajectory{U, T}
+
+A solution as code over solutions sees it (plotting, sampling, events after the fact): the saved
+times, the state at the `k`-th of them, and the state at any time in the span (`at`). The key is the
+state type `U` and the time type `T`, never the model: TDE's `ODESolution{T}` is a
+`Trajectory{Vector{T}, Float64}` for every problem.
+"""
+@trait Trajectory{U, T} begin
+    times(s::Trajectory{U, T})::Vector{T}
+    state(s::Trajectory{U, T}, k::Int)::U
+    at(s::Trajectory{U, T}, τ::T)::U
+end
+times(s::ODESolution) = s.t
+state(s::ODESolution{T}, k::Int) where {T} = s.u[k]
+"The state at `τ`, linear between the saved states (the solution keeps no interpolant)."
+function at(s::ODESolution{T}, τ::Float64) where {T}
+    ts = s.t
+    (isempty(ts) || τ < ts[1] || τ > ts[end]) && throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
+    k = searchsortedlast(ts, τ)
+    k == length(ts) && return copy(s.u[k])
+    θ = (τ - ts[k]) / (ts[k+1] - ts[k])
+    return (1 - θ) .* s.u[k] .+ θ .* s.u[k+1]
+end
+@implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}
 
 "Tsit5's state between steps. Its type holds the element type and the parameters' type, nothing else."
 mutable struct Tsit5Integrator{T,P}
@@ -399,8 +461,44 @@ const R5H = [
 const R5gamma = 0.19
 const R5b = [R5A[8, 1:7]..., 1.0]
 
-"Rodas5's state between steps: the integrator's view for callbacks, the stages, the Jacobian and W."
-mutable struct Rodas5Integrator{P}
+"""
+    DualJacobian{P, N, FD}
+
+The problem's plain function entered at Rodas5's `init` at the library's duals of chunk `N`,
+picked per problem from the state's length: `fd::FD` is bounded by `Callable{DualSig{P, N}, Nothing}`
+(traits reference §7.4), so `N` is the integrator's, not the problem's. With the dual buffers.
+"""
+struct DualJacobian{P,N,FD<:Callable{DualSig{P,N},Nothing}}
+    fd::FD
+    p::P
+    ud::Vector{FDual{N}}
+    dd::Vector{FDual{N}}
+end
+"The Jacobian by the integrator's duals: one call of the function per chunk of `N` columns."
+function dual_jacobian!(jc::DualJacobian{P,N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {P,N}
+    n = length(u)
+    ud, dd = jc.ud, jc.dd
+    for c0 in 1:N:n
+        for j in 1:n
+            ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
+        end
+        jc.fd(dd, ud, jc.p, t)::Nothing
+        for k in 1:N
+            col = c0 + k - 1
+            col > n && break
+            for i in 1:n
+                J[i, col] = ForwardDiff.partials(dd[i], k)
+            end
+        end
+    end
+    return nothing
+end
+"Enter the plain function `f` at the duals of chunk `N` (`f` as given: a cast or a kept value keeps its attribute)."
+Base.@nospecializeinfer dual_jacobian(@nospecialize(f), p::P, n::Int, ::Val{N}) where {P,N} =
+    DualJacobian(f, p, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
+
+"Rodas5's state between steps: the integrator's view for callbacks, the stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the problem's `jacobian!`."
+mutable struct Rodas5Integrator{P,JC}
     const u::Vector{Float64}
     const uprev::Vector{Float64}
     t::Float64
@@ -423,15 +521,16 @@ mutable struct Rodas5Integrator{P}
     nreject::Int
     nf::Int
     njac::Int
+    const jc::JC
 end
-@implement IntegratorView Rodas5Integrator{P} where {P}
+@implement IntegratorView Rodas5Integrator{P,JC} where {P,JC}
 
 "One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."
 function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, reltol::Float64)
     u, t, n = i.u, i.t, length(i.u)
     ks, du, du1, dT, ltmp, J, W, unew = i.ks, i.du, i.du1, i.dT, i.ltmp, i.J, i.W, i.unew
     rhs!(m, i.fsal, u, t)
-    jacobian!(m, J, u, t)
+    i.jc === nothing ? jacobian!(m, J, u, t) : dual_jacobian!(i.jc, J, u, t)
     i.njac += 1
     h = sqrt(eps(Float64)) * max(abs(t), 1.0)          # the time derivative, by a forward difference
     rhs!(m, du, u, t + h)
@@ -491,24 +590,41 @@ end
 """
     solve_ode(prob, Rodas5(), callbacks, opts) -> ODESolution
 
-Rodas5 with the problem's Jacobian (`jacobian!`: by the library's duals for TDE's `ODEProblem`, by
-finite differences or the problem type's own otherwise), dense LU, and a PI step-size controller.
-`Float64` states only.
+Rodas5 with the problem's Jacobian (`jacobian!`: the given one or by the library's duals for TDE's
+`ODEProblem`, by finite differences or the problem type's own otherwise), or with the problem's
+function entered at `init` at duals of a chunk picked per problem (`Rodas5(chunk_size = 0)`), dense
+LU, and a PI step-size controller. `Float64` states only.
 """
 solve_ode(prob::ODEProblemTrait, alg::Rodas5, callbacks::Vector{Callback}, opts::SolverOptions) =
-    rodas5_solve(prob, prob.u0, prob.tspan, prob.p, callbacks, opts)
-rodas5_solve(m, u0::Vector{T}, tspan, p, callbacks, opts) where {T} =
+    rodas5_solve(prob, alg, prob.u0, prob.tspan, prob.p, callbacks, opts)
+rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, p, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
-"Rodas5 for the problem `m` (a trait object)."
-function rodas5_solve(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
+"""
+Rodas5's `init` for the problem `m` (a trait object): with `alg.chunk_size` an `Int` and a plain
+function from the problem (`rhs_function`), the function is entered at the duals of chunk `N` here
+(`DualJacobian`), and the driver is compiled per `N`; otherwise the problem's `jacobian!`.
+"""
+function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
                       callbacks::Vector{Callback}, opts::SolverOptions)
+    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
+    f = rhs_function(m)
+    f === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
+    n = length(u0)
+    N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
+    jc = dual_jacobian(f, p, n, Val(N))
+    return rodas5_run(m, u0, tspan, p, callbacks, opts, jc)::ODESolution{Float64}   # a barrier per N
+end
+
+"Rodas5 for the problem `m` (a trait object), its Jacobian by `jc` (`nothing`: the problem's `jacobian!`)."
+function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
+                    callbacks::Vector{Callback}, opts::SolverOptions, jc)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
-    i = Rodas5Integrator{typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false, z(),
+    i = Rodas5Integrator{typeof(p),typeof(jc)}(copy(u0), copy(u0), t0, 0.0, p, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
-                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0)
+                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc)
     iv = Dynamic{IntegratorView}(i)
     # the initial step: as Tsit5's driver, from f(u0)
     rhs!(m, i.fsal, i.u, t0)

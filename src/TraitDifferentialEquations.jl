@@ -2,7 +2,7 @@
     TraitDifferentialEquations
 
 ODE solvers written as a trait module (`ODECore`), with an ordinary layer that offers
-SciML's interface: `ODEProblem(f, u0, tspan, p)`, `solve(prob, Tsit5(); callback, saveat)`,
+SciML's interface: `ODEFunction(f; jac)`, `ODEProblem(f, u0, tspan, p)`, `solve(prob, Tsit5(); callback, saveat)`,
 `DiscreteCallback(condition, affect!)`. A problem is any type that implements `ODEProblemTrait`;
 TDE's own `ODEProblem` is the canonical one. The first demonstrator of the trait world's
 viability; see README.md for the measurements.
@@ -14,14 +14,34 @@ calls into `ODECore`.
 module TraitDifferentialEquations
 using TraitWorld
 import ForwardDiff
+using LinearAlgebra: I, UniformScaling
 include("ODECore.jl")
 using .ODECore
-using .ODECore: RHSSig, DualSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual
-export ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!, Callback, condition,
-       affect!, IntegratorView
+using .ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual,
+                no_jacobian
+export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+       rhs_function, Callback, condition, affect!, IntegratorView, Trajectory
+
+"""
+    ODEFunction(f; jac = nothing, mass_matrix = I)
+
+SciML's record of the user's functions: the right-hand side `f(du, u, p, t)`, optionally its
+Jacobian `jac(J, u, p, t)` in `u`, and a mass matrix. A plain record: it has no parameter for the
+state's or the parameters' type, so it keeps the functions as given; `ODEProblem` enters them at
+its bounded parameters, where those types are known. Casts reach through it:
+`ODEFunction(compiled_for(f); jac = compiled_for(j))`. The solvers take the identity mass matrix
+only (`ArgumentError` otherwise).
+"""
+struct ODEFunction{F,TJ,TMM}
+    f::F
+    jac::TJ
+    mass_matrix::TMM
+end
+ODEFunction(f; jac = nothing, mass_matrix = I) = ODEFunction(f, jac, mass_matrix)
 
 """
     ODEProblem(f, u0, tspan, p = nothing)
+    ODEProblem(ODEFunction(f; jac), u0, tspan, p = nothing)
 
 A problem in SciML's form: `f(du, u, p, t)` in place, an initial state, a time span, parameters.
 The state keeps its element type (`Float32` stays `Float32`), or takes the parameters' dual type
@@ -29,13 +49,26 @@ for a gradient in `p`, as SciML promotes it. The function enters at its declared
 `(Vector{T}, Vector{T}, P, Float64) -> Nothing`, and at the library's dual numbers for the
 Jacobian: `Dynamic` by default (`Callable`'s), so the solver's code is compiled once per state and
 parameter type, never per function; `ODEProblem(compiled_for(f), …)` keeps the function itself, so
-the solver is compiled for it, with `f` inferred into it and its result checked at every call.
+the solver is compiled for it, with `f` inferred into it and its result checked at every call. A
+Jacobian given in an `ODEFunction` is entered at `(Matrix{T}, Vector{T}, P, Float64) -> Nothing`
+the same way, and Rodas5 calls it instead of differentiating `f`.
 """
 # neither specialized nor inferred on the function: only the function itself is compiled, at its signature
-Base.@nospecializeinfer ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing) =
-    _problem(f, _promote_state(_state(u0), p), (Float64(tspan[1]), Float64(tspan[2])), p)
-# the function at both of the problem's bounds: its attribute decides its form at each (traits reference §7.4)
-_problem(@nospecialize(f), u0::Vector, tspan::Tuple{Float64,Float64}, p) = ODECore.ODEProblem(f, u0, tspan, p, f)
+Base.@nospecializeinfer function ODECore.ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing)
+    u = _promote_state(_state(u0), p)
+    ts = (Float64(tspan[1]), Float64(tspan[2]))
+    if f isa ODEFunction
+        f.mass_matrix isa UniformScaling && f.mass_matrix == I ||
+            throw(ArgumentError("TraitDifferentialEquations' solvers take the identity mass matrix only"))
+        return _problem(f.f, f.jac, u, ts, p)
+    end
+    return _problem(f, nothing, u, ts, p)
+end
+# the function at the problem's bounds: its attribute decides its form at each (traits reference §7.4);
+# the function as given beside them, for a solver that enters it at its own chunk
+_problem(@nospecialize(f), @nospecialize(jac), u0::Vector, tspan::Tuple{Float64,Float64}, p) =
+    jac === nothing ? ODECore.ODEProblem(f, u0, tspan, p, f, compiled_for(no_jacobian), f) :
+                      ODECore.ODEProblem(f, u0, tspan, p, f, jac, f)
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)
@@ -60,7 +93,8 @@ _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat
 
 Solve a problem of any type that implements `ODEProblemTrait`: TDE's `ODEProblem`, or a problem
 type of its own (`@implement ODEProblemTrait MyProblem`), whose solver code is compiled for that
-type. Rodas5 takes `Float64` states and the problem's `jacobian!`.
+type. Rodas5 takes `Float64` states and the problem's `jacobian!`, or with `Rodas5(chunk_size = 0)` the problem's
+function at duals of a chunk picked from the state's length.
 
 This front end is neither specialized nor inferred on the problem's type, so a caller's code does
 not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
@@ -124,6 +158,7 @@ TraitWorld.@workload begin
     solve(prob, Rodas5())
     solve(ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1)), Rodas5())   # no parameters (p::Nothing)
     solve(prob, Rodas5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u[1] += 1.0; nothing)))
+    solve(prob, Rodas5(chunk_size = 0))                                    # the chunk picked at init (3)
     # gradients through Tsit5 for three parameters (chunk 3): every loss of this signature runs this code
     gradient(p -> sum(solve(ODEProblem(_wl_rhsp!, [1.0, 0.0, 0.0], (0.0, 0.1), p), Tsit5()).u[end]), [10.0, 28.0, 8 / 3])
 end

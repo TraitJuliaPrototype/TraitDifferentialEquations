@@ -1,0 +1,7 @@
+name = "ChainModels"
+uuid = "3e8c1f52-7a64-4d0b-9c2e-5f1a8b6d4e73"
+version = "0.0.1"
+authors = ["Frank Hellmann"]
+
+[compat]
+julia = "1.13"
