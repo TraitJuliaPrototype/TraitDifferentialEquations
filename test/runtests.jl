@@ -115,3 +115,4 @@ end
 include("routea.jl")
 include("compiledcall.jl")
 include("w34.jl")
+include("w34_move2.jl")

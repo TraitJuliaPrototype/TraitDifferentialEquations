@@ -63,6 +63,9 @@ function jacobian!(m::LorenzProblem{T}, J::Matrix{T}, u::Vector{T}, t::Float64) 
 end
 @implement ODEProblemTrait{T, LorenzParams{T}} LorenzProblem{T} where {T}
 
+"The integrator as Lorenz problems' callbacks see it: `integ.p` is the problem's `LorenzParams{Float64}`."
+const LorenzView = Dynamic{IntegratorView{Vector{Float64}, Float64, LorenzParams{Float64}}}
+
 """
     Bounce(wall)
 
@@ -71,32 +74,30 @@ A wall at `x = wall`: a state past it is reflected back (a callback that writes 
 struct Bounce
     wall::Float64
 end
-condition(cb::Bounce, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView}) = u[1] > cb.wall
-function affect!(cb::Bounce, integ::Dynamic{IntegratorView})
+condition(cb::Bounce, u::Vector{Float64}, t::Float64, integ::LorenzView) = u[1] > cb.wall
+function affect!(cb::Bounce, integ::LorenzView)
     u = integ.u
     u[1] = 2 * cb.wall - u[1]
     return nothing
 end
-@implement Callback Bounce
+@implement Callback{Vector{Float64}, Float64, LorenzParams{Float64}} Bounce
 
 """
     RaiseSigma(at, σ)
 
-From time `at` on, the problem's σ is `σ` (a callback that writes a parameter: it opens the
-integrator's `p`, the problem's parameters, at the type it expects, `LorenzParams{Float64}`).
+From time `at` on, the problem's σ is `σ` (a callback that writes a parameter: the integrator's `p`
+is the problem's parameters, read at their type, `LorenzParams{Float64}`).
 """
 struct RaiseSigma
     at::Float64
     σ::Float64
 end
-condition(cb::RaiseSigma, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView}) =
-    t >= cb.at && (integ.p::LorenzParams{Float64}).σ != cb.σ
-function affect!(cb::RaiseSigma, integ::Dynamic{IntegratorView})
-    p = integ.p::LorenzParams{Float64}
-    p.σ = cb.σ                               # the state is unchanged, f(u, t) is not: the driver evaluates it again
+condition(cb::RaiseSigma, u::Vector{Float64}, t::Float64, integ::LorenzView) = t >= cb.at && integ.p.σ != cb.σ
+function affect!(cb::RaiseSigma, integ::LorenzView)
+    integ.p.σ = cb.σ                         # the state is unchanged, f(u, t) is not: the driver evaluates it again
     return nothing
 end
-@implement Callback RaiseSigma
+@implement Callback{Vector{Float64}, Float64, LorenzParams{Float64}} RaiseSigma
 
 end
 using .Models

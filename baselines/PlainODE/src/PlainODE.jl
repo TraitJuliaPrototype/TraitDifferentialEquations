@@ -22,7 +22,9 @@ using FunctionWrappers: FunctionWrapper
 import ForwardDiff
 using PrecompileTools: @compile_workload
 using LinearAlgebra: lu!, ldiv!
-export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, compiled_for, rhs!, jacobian!, condition, affect!
+export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, compiled_for, rhs!, jacobian!, condition, affect!,
+       ContinuousCallback, TypedDiscreteCallback, TypedContinuousCallback, event_condition, event_affect!, add_tstop!, terminate!,
+       interp!, solve_typed
 
 struct Tsit5 end
 struct Rodas5 end
@@ -56,6 +58,34 @@ function condition end
 function affect! end
 condition(cb::DiscreteCallback, u, t, integ) = cb.condition(u, t, integ)
 affect!(cb::DiscreteCallback, integ) = (cb.affect!(integ); nothing)
+"A continuous callback: an event where `condition(u, t, integ)::Float64` changes sign within a step. Kept untyped."
+struct ContinuousCallback
+    condition::Any
+    affect!::Any
+end
+function event_condition end
+function event_affect! end
+event_condition(cb::ContinuousCallback, u, t, integ) = cb.condition(u, t, integ)::Float64
+event_affect!(cb::ContinuousCallback, integ) = (cb.affect!(integ); nothing)
+"""
+    TypedDiscreteCallback(condition, affect!), TypedContinuousCallback(condition, affect!)
+
+The typed control of E-158: the functions' types are the record's, and `solve_typed` takes the
+records in a tuple, so the driver is compiled for each set of callbacks (SciML's callback types in
+the integrator's type).
+"""
+struct TypedDiscreteCallback{C,A}
+    condition::C
+    affect!::A
+end
+struct TypedContinuousCallback{C,A}
+    condition::C
+    affect!::A
+end
+condition(cb::TypedDiscreteCallback, u, t, integ) = cb.condition(u, t, integ)
+affect!(cb::TypedDiscreteCallback, integ) = (cb.affect!(integ); nothing)
+event_condition(cb::TypedContinuousCallback, u, t, integ) = cb.condition(u, t, integ)::Float64
+event_affect!(cb::TypedContinuousCallback, integ) = (cb.affect!(integ); nothing)
 
 """
     rhs!(prob, du, u, t), jacobian!(prob, J, u, t)
@@ -106,7 +136,22 @@ mutable struct Tsit5Integrator{T,P}
     naccept::Int
     nreject::Int
     nf::Int
+    tprev::Float64
+    const kprev::Vector{T}
+    const tstops::Vector{Float64}
+    const evprev::Vector{Float64}
 end
+"A time the solver must step to (as TDE's `add_tstop!`); a time not ahead of `t` is ignored."
+function add_tstop!(i::Tsit5Integrator, τ::Float64)
+    τ > i.t || return nothing
+    k = searchsortedfirst(i.tstops, τ)
+    (k <= length(i.tstops) && i.tstops[k] == τ) || insert!(i.tstops, k, τ)
+    return nothing
+end
+terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
+"The state at `τ` within the last accepted step, by the cubic Hermite interpolant (as TDE's)."
+interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
+    (hermite!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, i.kprev, i.unew, i.k7); nothing)
 
 # --- Tsit5 (tableau from OrdinaryDiffEqTsit5 2.0.0, Tsitouras 2011) -------------------------------
 
@@ -192,16 +237,18 @@ type `T` is `Float64`, or a dual number for a gradient through the solve; the st
 reads primal values, so a gradient follows the primal solve's steps. Callbacks take `Float64` states.
 """
 function solve_ode(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, p::P,
-                   callbacks::Vector{Any}, opts::SolverOptions) where {T,P}
+                   callbacks::Union{Vector{Any},Tuple}, opts::SolverOptions, events::Union{Vector{Any},Tuple} = ()) where {T,P}
     t0, tf = tspan
     n = length(u0)
-    T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
+    T === Float64 || (isempty(callbacks) && isempty(events)) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
     z() = zeros(T, n)
     i = Tsit5Integrator{T,typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false,
-                                            z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0)
+                                            z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
+                                            t0, z(), Float64[], zeros(Float64, length(events)))
     m(i.k1, i.u, i.p, t0)
     i.nf += 1
     dt = initdt(m, i, 1.0, opts)
+    iv = i
     ts = Float64[t0]
     us = Vector{T}[copy(u0)]
     saveat = opts.saveat
@@ -210,6 +257,9 @@ function solve_ode(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, 
         isave = 2
     elseif !isempty(saveat)
         empty!(ts); empty!(us)
+    end
+    for k in eachindex(events)
+        i.evprev[k] = event_condition(events[k], i.u, i.t, iv)
     end
     # PI controller, OrdinaryDiffEq's defaults for a 5th-order method
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
@@ -222,38 +272,72 @@ function solve_ode(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, 
             break
         end
         dt = min(dt, tf - i.t)
+        tstop_hit = false
+        if !isempty(i.tstops) && i.tstops[1] - i.t <= dt
+            dt = i.tstops[1] - i.t
+            tstop_hit = true
+        end
         EEst = tsit5_step!(m, i, dt, opts.abstol, opts.reltol)
         q11 = EEst^beta1
         if EEst <= 1.0
-            # accept: save, advance, then callbacks
-            tnew = i.t + dt
+            # accept: advance, the continuous callbacks' events, save, then the discrete callbacks
+            tnew = tstop_hit ? i.tstops[1] : i.t + dt
+            copyto!(i.uprev, i.u)
+            copyto!(i.kprev, i.k1)
+            copyto!(i.u, i.unew)
+            copyto!(i.k1, i.k7)
+            i.tprev = i.t
+            i.t = tnew
+            i.dt = dt
+            i.naccept += 1
+            ke = 0
+            if T === Float64 && !isempty(events)
+                te = i.t
+                for k in eachindex(events)
+                    g = event_condition(events[k], i.u, i.t, iv)
+                    g0 = i.evprev[k]
+                    tl = i.tprev
+                    if isnan(g0)                         # the step after this callback's event: its value a
+                        tl = i.tprev + i.dt / 100        # little into the step (SciML's repeat nudge)
+                        interp!(iv, i.utilde, tl)
+                        g0 = event_condition(events[k], i.utilde, tl, iv)
+                    end
+                    if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
+                        tk = event_time(events[k], iv, i.utilde, tl, i.t, g0)
+                        if ke == 0 || tk < te
+                            ke, te = k, tk
+                        end
+                    end
+                    i.evprev[k] = g
+                end
+                if ke != 0                                   # the integrator moves to the earliest event
+                    interp!(iv, i.utilde, te)
+                    copyto!(i.u, i.utilde)
+                    i.t = te
+                end
+            end
+            tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
             if isempty(saveat)
-                push!(ts, tnew); push!(us, copy(i.unew))
+                push!(ts, i.t); push!(us, copy(i.u))
             else
-                while isave <= length(saveat) && saveat[isave] <= tnew
-                    θ = (saveat[isave] - i.t) / dt
+                while isave <= length(saveat) && saveat[isave] <= i.t
+                    θ = (saveat[isave] - i.tprev) / dt
                     push!(ts, saveat[isave])
-                    push!(us, hermite!(zeros(T, n), θ, dt, i.u, i.k1, i.unew, i.k7))
+                    push!(us, hermite!(zeros(T, n), θ, dt, i.uprev, i.kprev, i.unew, i.k7))
                     isave += 1
                 end
             end
-            copyto!(i.uprev, i.u)
-            copyto!(i.u, i.unew)
-            copyto!(i.k1, i.k7)
-            i.t = tnew
-            i.naccept += 1
-            T === Float64 && for cb in callbacks
-                if condition(cb, i.u, i.t, i)::Bool
-                    i.u_modified = true
-                    affect!(cb, i)
-                    if i.u_modified
-                        m(i.k1, i.u, i.p, i.t)          # the state changed: f(u, t) again
-                        i.nf += 1
-                        i.u_modified = false
-                    end
-                end
-                i.terminated && break
+            if ke != 0
+                i.u_modified = true
+                event_affect!(events[ke], iv)
+                m(i.k1, i.u, i.p, i.t)                     # the time moved back: f(u, t) again
+                i.nf += 1
+                i.u_modified = false
+                for k in eachindex(events)                   # the conditions again at the event's state;
+                    i.evprev[k] = k == ke ? NaN : event_condition(events[k], i.u, i.t, iv)
+                end                                          # the event's own a little into the next step
             end
+            T === Float64 && discrete_callbacks!(m, i, callbacks)
             q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
             dt = min(dt / q, opts.dtmax)
             i.qold = max(EEst, 1e-4)
@@ -264,6 +348,54 @@ function solve_ode(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, alg::Tsit5, 
     end
     i.terminated && (retcode = :Terminated)
     return ODESolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+end
+
+"The discrete callbacks after an accepted step, in order: kept untyped (a `Vector{Any}`, called dynamically)."
+function discrete_callbacks!(m, i::Tsit5Integrator, callbacks::Vector{Any})
+    for cb in callbacks
+        discrete_callback!(m, i, cb)
+        i.terminated && break
+    end
+    return nothing
+end
+"… or typed (a tuple: the driver compiled for the set, unrolled)."
+discrete_callbacks!(m, i::Tsit5Integrator, ::Tuple{}) = nothing
+function discrete_callbacks!(m, i::Tsit5Integrator, callbacks::Tuple)
+    discrete_callback!(m, i, first(callbacks))
+    i.terminated && return nothing
+    return discrete_callbacks!(m, i, Base.tail(callbacks))
+end
+@inline function discrete_callback!(m, i::Tsit5Integrator, cb)
+    if condition(cb, i.u, i.t, i)::Bool
+        i.u_modified = true
+        affect!(cb, i)
+        if i.u_modified
+            m(i.k1, i.u, i.p, i.t)          # the state changed: f(u, t) again
+            i.nf += 1
+            i.u_modified = false
+        end
+    end
+    return nothing
+end
+
+"""
+The time of a sign change of a continuous callback's condition within `(tl, tr]`, `gl` its value at
+`tl`: bisection on the solver's interpolant, to the resolution of `Float64`; returns the last time
+found on `tl`'s side, so the state there has not crossed. (The same text as TDE's.)
+"""
+function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
+    for _ in 1:100
+        tm = (tl + tr) / 2
+        (tm <= tl || tm >= tr) && break
+        interp!(iv, out, tm)
+        gm = event_condition(cb, out, tm, iv)
+        if gm != 0 && (gm > 0) == (gl > 0)
+            tl = tm
+        else
+            tr = tm
+        end
+    end
+    return tl
 end
 
 "Forward differences of `f(du, u, p, t)` in `u`: the default Jacobian."
@@ -539,14 +671,27 @@ _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)))
 function solve(@nospecialize(prob::ODEProblem), alg::Tsit5; callback = nothing, kw...)
     u0 = _promote_state(prob.u0, prob.p)
-    return _solve(prob.f, u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...))
+    cbs = _kept(callback)
+    return _solve(prob.f, u0, prob.tspan, alg, prob.p, Any[cb for cb in cbs if !(cb isa ContinuousCallback)], _options(; kw...),
+                  Any[cb for cb in cbs if cb isa ContinuousCallback])
 end
-function _solve(@nospecialize(f), u0::Vector{T}, tspan, alg, p::P, cbs, opts) where {T,P}
+function _solve(@nospecialize(f), u0::Vector{T}, tspan, alg, p::P, cbs, opts, evs = ()) where {T,P}
     w = FunctionWrapper{Nothing,Tuple{Vector{T},Vector{T},P,Float64}}(f isa Compiled ? f.f : f)
-    return solve_ode(w, u0, tspan, alg, p, cbs, opts)
+    return solve_ode(w, u0, tspan, alg, p, cbs, opts, evs)
 end
 # compiled mode: the function itself, so the solver specializes on its type
-_solve(f::Compiled, u0::Vector, tspan, alg::Tsit5, p, cbs, opts) = solve_ode(f.f, u0, tspan, alg, p, cbs, opts)
+_solve(f::Compiled, u0::Vector, tspan, alg::Tsit5, p, cbs, opts, evs = ()) = solve_ode(f.f, u0, tspan, alg, p, cbs, opts, evs)
+"""
+    solve_typed(prob, Tsit5(); callbacks = (), events = (), kw...)
+
+E-158's typed control: the callbacks as typed records (`TypedDiscreteCallback`, `TypedContinuousCallback`)
+in tuples, so the driver is compiled for each set of callbacks; the function as `solve`'s (a
+FunctionWrapper, or itself under `compiled_for`).
+"""
+function solve_typed(@nospecialize(prob::ODEProblem), alg::Tsit5; callbacks::Tuple = (), events::Tuple = (), kw...)
+    u0 = _promote_state(prob.u0, prob.p)
+    return _solve(prob.f, u0, prob.tspan, alg, prob.p, callbacks, _options(; kw...), events)
+end
 function solve(@nospecialize(prob::ODEProblem), alg::Rodas5; callback = nothing, kw...)
     N = min(length(prob.u0), 8)
     return _solve_ad(prob.f isa Compiled ? prob.f.f : prob.f, prob.u0, prob.tspan, alg, prob.p, _kept(callback), _options(; kw...), Val(N))

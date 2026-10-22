@@ -6,9 +6,10 @@
 #     as a `Dynamic{Callable{…}}` (`Callable`'s default), so the solver compiles once per element and
 #     parameter type, whatever the function; under `compiled_for(f)` the function itself, and the
 #     solver compiles per function;
-#   - callbacks are kept with their attribute (`Vector{Callback}`) and see the integrator as a
-#     `Dynamic{IntegratorView}`, so a new callback compiles nothing in the solver unless the caller
-#     casts it with `compiled_for`;
+#   - callbacks are entered at the problem's types at a solver's `init` and kept with their attribute
+#     (`Vector{Callback{U, T, P}}`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
+#     so a new callback compiles nothing in the solver unless the caller casts it with `compiled_for`,
+#     and a callback reads `integ.p` at the problem's parameter type;
 #   - a solution is a `Trajectory{U, T}`: code over solutions is compiled per state and time type,
 #     whatever the model.
 @trait_module module ODECore
@@ -16,8 +17,9 @@ using TraitWorld
 using LinearAlgebra: lu!, ldiv!
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
-       solve_ode, ODEProblem, FunctionCallback, keep_callback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
-       no_jacobian, UserFunction
+       solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
+       no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
+       DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -60,22 +62,50 @@ function fd_jacobian!(prob, J::Matrix{T}, u::Vector{T}, t::Float64) where {T}
 end
 
 """
-What a callback sees of the integrator: the state (its contents writable), the time, the
-parameters, and two flags. Fields only, so there is no receiver type: the key is the
-fields' types, `T` and `P` defined by matching them.
+    IntegratorView{U, T, P}
+
+What a callback sees of the integrator: the state `u::U` (its contents writable), the time `t::T`,
+the last step's size `dt::T`, the parameters `p::P`, two flags, and three operations: `add_tstop!`
+(a time the solver must step to), `terminate!`, and `interp!(i, out, τ)`, the state at `τ` within
+the last accepted step by the solver's interpolant. `U`, `T` and `P` are defined by the fields, so
+a callback reads `integ.p` at the problem's parameter type. Each solver's integrator conforms as a
+family, by its own methods.
 """
-@trait IntegratorView{T, P} begin
-    @const u::Vector{T}
-    @const t::Float64
+@trait IntegratorView{U, T, P} begin
+    @const u::U
+    @const t::T
+    @const dt::T
     @const p::P
     u_modified::Bool
     terminated::Bool
+    add_tstop!(i::IntegratorView{U, T, P}, τ::T)::Nothing
+    terminate!(i::IntegratorView{U, T, P})::Nothing
+    interp!(i::IntegratorView{U, T, P}, out::U, τ::T)::Nothing
 end
 
-"A discrete callback: checked after every accepted step."
-@trait Callback begin
-    condition(cb::Callback, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView})::Bool
-    affect!(cb::Callback, integ::Dynamic{IntegratorView})::Nothing
+"""
+    Callback{U, T, P}
+
+A discrete callback, checked after every accepted step: `condition` decides, `affect!` acts on the
+integrator, which it sees as a `Dynamic{IntegratorView{U, T, P}}`. The integrator keeps its callbacks
+as `Vector{Callback{U, T, P}}`, so their types reach neither the integrator's type nor the driver.
+A callback type implements it at the problem's types: `@implement Callback{Vector{Float64}, Float64, P} MyCallback`.
+"""
+@trait Callback{U, T, P} begin
+    condition(cb::Callback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Bool
+    affect!(cb::Callback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
+end
+
+"""
+    EventCallback{U, T, P}
+
+A continuous callback: an event where the scalar `event_condition` changes sign within a step; the
+solver locates it by bisection on the interpolant (`interp!`), moves the integrator to it, and calls
+`event_affect!`.
+"""
+@trait EventCallback{U, T, P} begin
+    event_condition(cb::EventCallback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Float64
+    event_affect!(cb::EventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
 end
 
 # --- the signatures of plain functions --------------------------------------------------------
@@ -84,8 +114,10 @@ end
 const RHSSig{P,T} = Tuple{Vector{T},Vector{T},P,Float64}
 "The signature of a plain Jacobian `jac(J, u, p, t)` (SciML's `ODEFunction(f; jac)`), at element type `T`."
 const JacSig{P,T} = Tuple{Matrix{T},Vector{T},P,Float64}
-const CondSig = Tuple{Vector{Float64},Float64,Dynamic{IntegratorView}}
-const AffectSig = Tuple{Dynamic{IntegratorView}}
+"The signature of a plain callback condition `condition(u, t, integ)`, at the problem's types."
+const CondSig{U,T,P} = Tuple{U,T,Dynamic{IntegratorView{U,T,P}}}
+"The signature of a plain `affect!(integ)`."
+const AffectSig{U,T,P} = Tuple{Dynamic{IntegratorView{U,T,P}}}
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
 # (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
@@ -170,17 +202,79 @@ function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{F
 end
 @implement ODEProblemTrait{T,P} ODEProblem{T,P,F,D,J} where {T,P,F,D,J}
 
-"A callback made of two plain functions (SciML's `DiscreteCallback(condition, affect!)`)."
-struct FunctionCallback
-    cond::Callable{CondSig,Bool}            # a function kept with its attribute (Kept{Callable{…}})
-    aff::Callable{AffectSig,Nothing}
-end
-condition(cb::FunctionCallback, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView}) = cb.cond(u, t, integ)
-affect!(cb::FunctionCallback, integ::Dynamic{IntegratorView}) = (cb.aff(integ); nothing)
-@implement Callback FunctionCallback
+"""
+    DiscreteCallback(condition, affect!)
+    ContinuousCallback(condition, affect!)
 
-"Keep a callback of any conforming type beyond the call, with its attribute: what `solve` stores."
-keep_callback(cb::Callback) = Kept{Callback}(cb)
+The user's callback from two plain functions (SciML's): `condition(u, t, integ)::Bool` (discrete) or
+`::Float64` (continuous: an event where it changes sign), and `affect!(integ)`. Plain records: they
+keep the functions as given, before the problem's types are known; a solver's `init` enters them at
+`(U, T, P)` (`enter_callbacks`).
+"""
+struct DiscreteCallback
+    condition::Any
+    affect!::Any
+    Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a)) = new(c, a)
+end
+struct ContinuousCallback
+    condition::Any
+    affect!::Any
+    Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a)) = new(c, a)
+end
+
+"A discrete callback as the integrator keeps it: two plain functions entered at the problem's types, each kept with its attribute (`Kept{Callable{…}}`)."
+struct FunctionCallback{U,T,P}
+    cond::Callable{CondSig{U,T,P},Bool}
+    aff::Callable{AffectSig{U,T,P},Nothing}
+end
+condition(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
+affect!(cb::FunctionCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
+@implement Callback{U,T,P} FunctionCallback{U,T,P} where {U,T,P}
+
+"A continuous callback as the integrator keeps it."
+struct FunctionEventCallback{U,T,P}
+    cond::Callable{CondSig{U,T,P},Float64}
+    aff::Callable{AffectSig{U,T,P},Nothing}
+end
+event_condition(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
+event_affect!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
+@implement EventCallback{U,T,P} FunctionEventCallback{U,T,P} where {U,T,P}
+
+"A plain function kept at a signature (`K`, a `Kept{Callable{…}}`), neither specialized nor inferred on it: entering a new function compiles none of the library's code."
+Base.@nospecializeinfer _keep_fn(::Type{K}, @nospecialize(f)) where {K} = K(f)::K
+
+"""
+    enter_callbacks(cbs, U, P) -> (discrete, continuous)
+
+A solver's `init` step for callbacks: the user's callbacks entered at the problem's types `(U, Float64, P)`.
+A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions kept at the signatures
+(`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is kept as it is, refused
+if it does not conform at these types. The integrator keeps the two vectors.
+"""
+function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
+    T = Float64
+    d = Kept{Callback{U,T,P}}[]                  # `Callback{U,T,P}[]` is not taken as `Kept{…}` here (E-158 finding)
+    c = Kept{EventCallback{U,T,P}}[]
+    for cb in cbs
+        if cb isa DiscreteCallback
+            push!(d, FunctionCallback{U,T,P}(_keep_fn(Kept{Callable{CondSig{U,T,P},Bool}}, cb.condition),
+                                             _keep_fn(Kept{Callable{AffectSig{U,T,P},Nothing}}, cb.affect!)))
+        elseif cb isa ContinuousCallback
+            push!(c, FunctionEventCallback{U,T,P}(_keep_fn(Kept{Callable{CondSig{U,T,P},Float64}}, cb.condition),
+                                                  _keep_fn(Kept{Callable{AffectSig{U,T,P},Nothing}}, cb.affect!)))
+        elseif _is_event_callback(cb, EventCallback{U,T,P})
+            push!(c, _keep_fn(Kept{EventCallback{U,T,P}}, cb))
+        else
+            push!(d, _keep_fn(Kept{Callback{U,T,P}}, cb))
+        end
+    end
+    return d, c
+end
+"Whether a callback value is a continuous one: a kept value of `EventCallback`, a cast of one, or a value of a type that conforms."
+Base.@nospecializeinfer _is_event_callback(@nospecialize(cb), @nospecialize(E)) =
+    cb isa Kept{E} || cb isa Dynamic{E} || cb isa Compiled{E} || conforms(typeof(_uncast(cb)), E)
+Base.@nospecializeinfer _uncast(@nospecialize(cb)) =
+    cb isa TraitWorld.CompiledFor ? getfield(cb, :x) : cb isa TraitWorld.WithDynamic ? getfield(cb, :x) : cb
 
 # --- options, solution, the integrator ---------------------------------------------------------
 
@@ -240,7 +334,11 @@ function at(s::ODESolution{T}, τ::Float64) where {T}
 end
 @implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}
 
-"Tsit5's state between steps. Its type holds the element type and the parameters' type, nothing else."
+"""
+Tsit5's state between steps. Its type holds the element type and the parameters' type, nothing
+else: the callbacks are kept with their attributes (`Vector{Callback{…}}`), so their types do not
+reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
+"""
 mutable struct Tsit5Integrator{T,P}
     const u::Vector{T}
     const uprev::Vector{T}
@@ -263,8 +361,27 @@ mutable struct Tsit5Integrator{T,P}
     naccept::Int
     nreject::Int
     nf::Int
+    tprev::Float64
+    const kprev::Vector{T}
+    const tstops::Vector{Float64}
+    const callbacks::Vector{Callback{Vector{T},Float64,P}}
+    const events::Vector{EventCallback{Vector{T},Float64,P}}
+    const evprev::Vector{Float64}
 end
+add_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
+terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
+"The state at `τ` within the last accepted step, by the cubic Hermite interpolant (as for `saveat`)."
+interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
+    (hermite!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, i.kprev, i.unew, i.k7); nothing)
 @implement IntegratorView Tsit5Integrator{T,P} where {T,P}
+
+"Insert `τ` into the sorted times the solver must step to; a time not ahead of `t` is ignored."
+function _add_tstop!(tstops::Vector{Float64}, t::Float64, τ::Float64)
+    τ > t || return nothing
+    k = searchsortedfirst(tstops, τ)
+    (k <= length(tstops) && tstops[k] == τ) || insert!(tstops, k, τ)
+    return nothing
+end
 
 # --- Tsit5 (tableau from OrdinaryDiffEqTsit5 2.0.0, Tsitouras 2011) -------------------------------
 
@@ -344,35 +461,78 @@ end
     solve_ode(prob, Tsit5(), callbacks, opts) -> ODESolution
 
 Integrate the problem from `prob.u0` over `prob.tspan` with Tsit5 and a PI step-size controller.
-`prob.p` is what callbacks see as `integ.p`; `callbacks` are kept callbacks (`keep_callback`). The
-element type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the
-solve; the step-size control reads primal values, so a gradient follows the primal solve's steps.
-Callbacks take `Float64` states.
+`prob.p` is what callbacks see as `integ.p`; `callbacks` are the user's callbacks as given
+(`DiscreteCallback`, `ContinuousCallback`, values of callback types), entered at the problem's types
+at `init`. The element type `T` is the state's: `Float64`, `Float32`, or a dual number for a
+gradient through the solve; the step-size control reads primal values, so a gradient follows the
+primal solve's steps. Callbacks take `Float64` states.
 """
-solve_ode(prob::ODEProblemTrait, alg::Tsit5, callbacks::Vector{Callback}, opts::SolverOptions) =
+solve_ode(prob::ODEProblemTrait, alg::Tsit5, callbacks::Vector{Any}, opts::SolverOptions) =
     tsit5_solve(prob, prob.u0, prob.tspan, prob.p, callbacks, opts)
 
 "Tsit5 for the problem `m` (a trait object), at its state's element type `T`."
 function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p,
-                     callbacks::Vector{Callback}, opts::SolverOptions) where {T}
-    t0, tf = tspan
+                     callbacks::Vector{Any}, opts::SolverOptions) where {T}
+    i = tsit5_init(m, u0, tspan, p, callbacks)
+    return tsit5_run!(m, i, tspan[2], opts)
+end
+
+"""
+Tsit5's `init`: the integrator at `(T, P)`, the user's callbacks entered at `(Vector{T}, Float64, P)`
+(`enter_callbacks`), and `f(u0, t0)`. Its type is `Tsit5Integrator{T, P}` whatever the callbacks.
+"""
+function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p, callbacks::Vector{Any}) where {T}
+    t0 = tspan[1]
     n = length(u0)
     T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
+    d, c = enter_callbacks(callbacks, Vector{T}, typeof(p))
     z() = zeros(T, n)
     i = Tsit5Integrator{T,typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false,
-                                            z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0)
+                                     z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
+                                     t0, z(), Float64[], d, c, zeros(Float64, length(c)))
     rhs!(m, i.k1, i.u, t0)
     i.nf += 1
+    return i
+end
+
+"""
+The time of a sign change of a continuous callback's condition within `(tl, tr]`, `gl` its value at
+`tl`: bisection on the solver's interpolant, to the resolution of `Float64`; returns the last time
+found on `tl`'s side, so the state there has not crossed. (The same text as PlainODE's.)
+"""
+function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
+    for _ in 1:100
+        tm = (tl + tr) / 2
+        (tm <= tl || tm >= tr) && break
+        interp!(iv, out, tm)
+        gm = event_condition(cb, out, tm, iv)
+        if gm != 0 && (gm > 0) == (gl > 0)
+            tl = tm
+        else
+            tr = tm
+        end
+    end
+    return tl
+end
+
+"Tsit5's driver: steps the integrator `i` to `tf` (or until a callback terminates it)."
+function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions) where {T,P}
+    t0 = i.t
+    n = length(i.u)
     dt = initdt(m, i, 1.0, opts)
-    iv = Dynamic{IntegratorView}(i)
+    iv = Dynamic{IntegratorView{Vector{T},Float64,P}}(i)
     ts = Float64[t0]
-    us = Vector{T}[copy(u0)]
+    us = Vector{T}[copy(i.u)]
     saveat = opts.saveat
     isave = 1
     if !isempty(saveat) && saveat[1] == t0
         isave = 2
     elseif !isempty(saveat)
         empty!(ts); empty!(us)
+    end
+    events = i.events
+    for k in eachindex(events)
+        i.evprev[k] = event_condition(events[k], i.u, i.t, iv)
     end
     # PI controller, OrdinaryDiffEq's defaults for a 5th-order method
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
@@ -385,27 +545,72 @@ function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p,
             break
         end
         dt = min(dt, tf - i.t)
+        tstop_hit = false
+        if !isempty(i.tstops) && i.tstops[1] - i.t <= dt
+            dt = i.tstops[1] - i.t
+            tstop_hit = true
+        end
         EEst = tsit5_step!(m, i, dt, opts.abstol, opts.reltol)
         q11 = EEst^beta1
         if EEst <= 1.0
-            # accept: save, advance, then callbacks
-            tnew = i.t + dt
+            # accept: advance, the continuous callbacks' events, save, then the discrete callbacks
+            tnew = tstop_hit ? i.tstops[1] : i.t + dt
+            copyto!(i.uprev, i.u)
+            copyto!(i.kprev, i.k1)
+            copyto!(i.u, i.unew)
+            copyto!(i.k1, i.k7)
+            i.tprev = i.t
+            i.t = tnew
+            i.dt = dt
+            i.naccept += 1
+            ke = 0
+            if T === Float64 && !isempty(events)
+                te = i.t
+                for k in eachindex(events)
+                    g = event_condition(events[k], i.u, i.t, iv)
+                    g0 = i.evprev[k]
+                    tl = i.tprev
+                    if isnan(g0)                         # the step after this callback's event: its value a
+                        tl = i.tprev + i.dt / 100        # little into the step (SciML's repeat nudge)
+                        interp!(iv, i.utilde, tl)
+                        g0 = event_condition(events[k], i.utilde, tl, iv)
+                    end
+                    if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
+                        tk = event_time(events[k], iv, i.utilde, tl, i.t, g0)
+                        if ke == 0 || tk < te
+                            ke, te = k, tk
+                        end
+                    end
+                    i.evprev[k] = g
+                end
+                if ke != 0                                   # the integrator moves to the earliest event
+                    interp!(iv, i.utilde, te)
+                    copyto!(i.u, i.utilde)
+                    i.t = te
+                end
+            end
+            tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
             if isempty(saveat)
-                push!(ts, tnew); push!(us, copy(i.unew))
+                push!(ts, i.t); push!(us, copy(i.u))
             else
-                while isave <= length(saveat) && saveat[isave] <= tnew
-                    θ = (saveat[isave] - i.t) / dt
+                while isave <= length(saveat) && saveat[isave] <= i.t
+                    θ = (saveat[isave] - i.tprev) / dt
                     push!(ts, saveat[isave])
-                    push!(us, hermite!(zeros(T, n), θ, dt, i.u, i.k1, i.unew, i.k7))
+                    push!(us, hermite!(zeros(T, n), θ, dt, i.uprev, i.kprev, i.unew, i.k7))
                     isave += 1
                 end
             end
-            copyto!(i.uprev, i.u)
-            copyto!(i.u, i.unew)
-            copyto!(i.k1, i.k7)
-            i.t = tnew
-            i.naccept += 1
-            T === Float64 && for cb in callbacks
+            if ke != 0
+                i.u_modified = true
+                event_affect!(events[ke], iv)
+                rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
+                i.nf += 1
+                i.u_modified = false
+                for k in eachindex(events)                   # the conditions again at the event's state;
+                    i.evprev[k] = k == ke ? NaN : event_condition(events[k], i.u, i.t, iv)
+                end                                          # the event's own a little into the next step
+            end
+            T === Float64 && for cb in i.callbacks
                 if condition(cb, i.u, i.t, iv)
                     i.u_modified = true
                     affect!(cb, iv)
@@ -529,6 +734,21 @@ mutable struct Rodas5Integrator{P,JC}
     nf::Int
     njac::Int
     const jc::JC
+    tprev::Float64
+    const tstops::Vector{Float64}
+    const callbacks::Vector{Callback{Vector{Float64},Float64,P}}
+end
+add_tstop!(i::Rodas5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
+terminate!(i::Rodas5Integrator) = (i.terminated = true; nothing)
+"The state at `τ` within the last accepted step, by Rodas5's interpolant."
+function interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
+    θ = (τ - i.tprev) / i.dt
+    θ1 = 1 - θ
+    k1, k2, k3 = i.kint[1], i.kint[2], i.kint[3]
+    @inbounds for j in eachindex(out)
+        out[j] = θ1 * i.uprev[j] + θ * (i.u[j] + θ1 * (k1[j] + θ * (k2[j] + θ * k3[j])))
+    end
+    return nothing
 end
 @implement IntegratorView Rodas5Integrator{P,JC} where {P,JC}
 
@@ -602,7 +822,7 @@ Rodas5 with the problem's Jacobian (`jacobian!`: the given one or by the library
 function entered at `init` at duals of a chunk picked per problem (`Rodas5(chunk_size = 0)`), dense
 LU, and a PI step-size controller. `Float64` states only.
 """
-solve_ode(prob::ODEProblemTrait, alg::Rodas5, callbacks::Vector{Callback}, opts::SolverOptions) =
+solve_ode(prob::ODEProblemTrait, alg::Rodas5, callbacks::Vector{Any}, opts::SolverOptions) =
     rodas5_solve(prob, alg, prob.u0, prob.tspan, prob.p, callbacks, opts)
 rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, p, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
@@ -613,7 +833,7 @@ function from the problem (`rhs_function`), the function is entered at the duals
 (`DualJacobian`), and the driver is compiled per `N`; otherwise the problem's `jacobian!`.
 """
 function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
-                      callbacks::Vector{Callback}, opts::SolverOptions)
+                      callbacks::Vector{Any}, opts::SolverOptions)
     alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
     f = rhs_function(m)
     f === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
@@ -625,14 +845,17 @@ end
 
 "Rodas5 for the problem `m` (a trait object), its Jacobian by `jc` (`nothing`: the problem's `jacobian!`)."
 function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
-                    callbacks::Vector{Callback}, opts::SolverOptions, jc)
+                    callbacks::Vector{Any}, opts::SolverOptions, jc)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
+    d, c = enter_callbacks(callbacks, Vector{Float64}, typeof(p))
+    isempty(c) || throw(ArgumentError("continuous callbacks: Tsit5 only"))
     i = Rodas5Integrator{typeof(p),typeof(jc)}(copy(u0), copy(u0), t0, 0.0, p, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
-                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc)
-    iv = Dynamic{IntegratorView}(i)
+                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc,
+                                    t0, Float64[], d)
+    iv = Dynamic{IntegratorView{Vector{Float64},Float64,typeof(p)}}(i)
     # the initial step: as Tsit5's driver, from f(u0)
     rhs!(m, i.fsal, i.u, t0)
     i.nf += 1
@@ -659,10 +882,15 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
             break
         end
         dt = min(dt, tf - i.t)
+        tstop_hit = false
+        if !isempty(i.tstops) && i.tstops[1] - i.t <= dt
+            dt = i.tstops[1] - i.t
+            tstop_hit = true
+        end
         EEst = rodas5_step!(m, i, dt, opts.abstol, opts.reltol)
         q11 = EEst^beta1
         if EEst <= 1.0
-            tnew = i.t + dt
+            tnew = tstop_hit ? popfirst!(i.tstops) : i.t + dt
             if isempty(saveat)
                 push!(ts, tnew); push!(us, copy(i.unew))
             else
@@ -674,9 +902,11 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
             end
             copyto!(i.uprev, i.u)
             copyto!(i.u, i.unew)
+            i.tprev = i.t
             i.t = tnew
+            i.dt = dt
             i.naccept += 1
-            for cb in callbacks
+            for cb in i.callbacks
                 if condition(cb, i.u, i.t, iv)
                     i.u_modified = true
                     affect!(cb, iv)

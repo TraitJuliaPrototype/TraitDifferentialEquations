@@ -45,14 +45,14 @@ const ENTRIES = Tuple{Symbol,String}[
     # a new callback type at the prompt, the same behaviour: the same values
     (:both, "struct ResetZ; lim::Float64; end"),
     (:trait, """
-     Lib.condition(cb::ResetZ, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView}) = u[3] > cb.lim
-     Lib.affect!(cb::ResetZ, integ::Dynamic{IntegratorView}) = (integ.u[3] = 0.0; nothing)
+     Lib.condition(cb::ResetZ, u::Vector{Float64}, t::Float64, integ::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}}) = u[3] > cb.lim
+     Lib.affect!(cb::ResetZ, integ::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}}) = (integ.u[3] = 0.0; nothing)
      """),
     (:plain, """
      Lib.condition(cb::ResetZ, u, t, integ) = u[3] > cb.lim
      Lib.affect!(cb::ResetZ, integ) = (integ.u[3] = 0.0; nothing)
      """),
-    (:trait, "@implement Callback ResetZ"),
+    (:trait, "@implement Callback{Vector{Float64}, Float64, Vector{Float64}} ResetZ"),
     (:both, "s5 = solve(probL, Tsit5(); callback = ResetZ(5.0)); check(\"new callback type\", s5.u == s4.u)"),
     (:both, "s5b = solve(Rossler(r0, (0.0, 60.0), rp), Tsit5(); callback = (ResetZ(5.0), reset)); check(\"two callbacks, problem type\", s5b.u == s4.u)"),
     # a new loss, through the new function

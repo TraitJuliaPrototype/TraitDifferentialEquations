@@ -3,7 +3,7 @@
 
 ODE solvers written as a trait module (`ODECore`), with an ordinary layer that offers
 SciML's interface: `ODEFunction(f; jac)`, `ODEProblem(f, u0, tspan, p)`, `solve(prob, Tsit5(); callback, saveat)`,
-`DiscreteCallback(condition, affect!)`. A problem is any type that implements `ODEProblemTrait`;
+`DiscreteCallback(condition, affect!)`, `ContinuousCallback(condition, affect!)`. A problem is any type that implements `ODEProblemTrait`;
 TDE's own `ODEProblem` is the canonical one. The first demonstrator of the trait world's
 viability; see README.md for the measurements.
 
@@ -17,10 +17,11 @@ import ForwardDiff
 using LinearAlgebra: I, UniformScaling
 include("ODECore.jl")
 using .ODECore
-using .ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, keep_callback, solve_ode, SolverOptions, FDual,
+using .ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, SolverOptions, FDual,
                 no_jacobian, UserFunction
-export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
-       rhs_function, Callback, condition, affect!, IntegratorView, Trajectory
+export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+       rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!,
+       add_tstop!, terminate!, interp!
 
 """
     ODEFunction(f; jac = nothing, mass_matrix = I)
@@ -76,13 +77,10 @@ _state(u0::AbstractVector) = Vector{Float64}(u0)
 _promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
 _promote_state(u0::Vector, p) = u0
 
-"A discrete callback from two plain functions: `condition(u, t, integ)::Bool` and `affect!(integ)`."
-DiscreteCallback(condition, affect!) =
-    FunctionCallback(Kept{Callable{CondSig,Bool}}(condition), Kept{Callable{AffectSig,Nothing}}(affect!))
-
-_kept(::Nothing) = Kept{Callback}[]
-_kept(cb) = Kept{Callback}[keep_callback(cb)]
-_kept(cbs::Union{Tuple,AbstractVector}) = Kept{Callback}[keep_callback(cb) for cb in cbs]
+# the user's callbacks as given (`DiscreteCallback`, `ContinuousCallback`, values of callback types):
+# a solver's `init` enters them at the problem's types
+Base.@nospecializeinfer _cbs(@nospecialize(cb)) = cb === nothing ? Any[] : Any[cb]
+Base.@nospecializeinfer _cbs(@nospecialize(cbs::Union{Tuple,AbstractVector})) = Any[cb for cb in cbs]
 
 _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[]) =
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)))
@@ -100,8 +98,8 @@ This front end is neither specialized nor inferred on the problem's type, so a c
 not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
 which calls the solver at that type.
 """
-Base.@nospecializeinfer solve(@nospecialize(prob), alg::Union{Tsit5,Rodas5}; callback = nothing, kw...) =
-    _solve(prob, alg, _kept(callback), _options(; kw...))
+Base.@nospecializeinfer solve(@nospecialize(prob), alg::Union{Tsit5,Rodas5}; @nospecialize(callback = nothing), kw...) =
+    _solve(prob, alg, _cbs(callback), _options(; kw...))
 _solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
 
 # --- gradients through `solve` (row 5) --------------------------------------------------------------
@@ -154,6 +152,9 @@ TraitWorld.@workload begin
     # the integrator's writable fields, as callbacks write them
     solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.terminated = true; nothing)))
     solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u_modified = false; nothing)))
+    # the view's operations, and a continuous callback (its bisection on interp!)
+    solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (add_tstop!(i, 0.08); terminate!(i); nothing)))
+    solve(prob, Tsit5(); callback = ContinuousCallback((u, t, i) -> u[1] - 1.5, i -> (i.u[1] = 1.0; nothing)))
     solve(ODEProblem(_wl_rhs0!, [1.0], (0.0, 0.1)), Tsit5())
     solve(prob, Rodas5())
     solve(ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1)), Rodas5())   # no parameters (p::Nothing)
