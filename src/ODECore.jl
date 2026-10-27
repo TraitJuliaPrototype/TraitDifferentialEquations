@@ -34,8 +34,8 @@ Jacobian is by finite differences of `rhs!`; a problem that can do better implem
 `ODEProblem` does: the given Jacobian, else ForwardDiff's duals). `p` is what callbacks see as
 `integ.p`.
 
-`rhs_function(prob)` is the user's right-hand side `f(du, u, p, t)` as a plain value, for a solver
-that enters it at a signature of its own choosing (Rodas5 at the duals of a chunk picked from the
+`rhs_function(prob)` is the user's right-hand side partially evaluated on the parameters, `(du, u, t)`,
+as a plain value (W-63), for a solver that enters it at a signature of its own choosing (Rodas5 at the duals of a chunk picked from the
 state's length, at its `init`); `nothing` (the default) when the problem has no such function or
 brings its own Jacobian, and the solver calls `jacobian!`.
 """
@@ -216,22 +216,24 @@ end
 TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain right-hand side
 `f(du, u, p, t)`, an initial state, a time span, parameters, and optionally a Jacobian
 `jac(J, u, p, t)` (SciML's split: the user's functions come in a plain record, `ODEFunction`, which
-has no parameter for `u`'s or `p`'s type; the problem has them, and enters the functions at its
-bounded parameters). Each function is kept at a parameter bounded by `Callable` (traits reference
-§7.4), as its bound gives it: the function itself under `compiled_for(f)`, so the solver compiles
-per function; a `Dynamic{Callable{…}}` otherwise (`Callable`'s default, and `with_dynamic`), so it
-compiles once per `(T, P)`:
-- `f::F` at `RHSSig{P, T}`;
-- `fd::D` at the library's dual numbers `DualSig{P, DUAL_CHUNK}`, for the Jacobian of a `Float64`
-  state (a `Dynamic` one's pointer is made at its first call);
-- `jac::J` at `JacSig{P, T}`, the given Jacobian; without one, the library's `no_jacobian`, kept
-  compiled, so `jacobian!` folds on `J`.
-- `fplain`, the user's function as given, beside the kept ones (`rhs_function`): a solver that picks
-  its own dual chunk enters it at its `init` (Rodas5's `chunk_size`). Held in a `UserFunction`, so
-  that no constructor is specialized on the function's type.
-Made by `ODEProblem(f, u0, tspan, p, f, jac, UserFunction(f))`; the front end `ODEProblem(f, u0, tspan, p)` does that.
+has no parameter for `u`'s or `p`'s type; the problem has them). The problem keeps each function
+partially evaluated on its parameters (`PartialFn(f, p)`, W-63), at a parameter bounded by `Callable`
+at a signature without the parameters (traits reference §7.4), as its bound gives it: the record
+itself under `compiled_for(f)`, so the solver compiles per function; a `Dynamic{Callable{…}}`
+otherwise (`Callable`'s default, and `with_dynamic`), so the solver compiles once per state type,
+whatever the function and the parameters:
+- `f::F` at `CoreRHSSig{T}`;
+- `fd::D` at the library's dual numbers `CoreDualSig{DUAL_CHUNK}`, for the Jacobian of a `Float64`
+  state (a `Dynamic` one's pointer is made at its first call); `no_dual` otherwise;
+- `jac::J` at `CoreJacSig{T}`, the given Jacobian; without one, the library's `core_no_jacobian`,
+  kept compiled, so `jacobian!` folds on `J`.
+- `fplain`, the partially evaluated function as a plain value, beside the kept ones (`rhs_function`):
+  a solver that picks its own dual chunk enters it at its `init` (Rodas5's `chunk_size`). Held in a
+  `UserFunction`, so that no constructor is specialized on the function's type.
+`p` is what callbacks see as `integ.p`, the same object the kept functions hold. Made by the front end
+`ODEProblem(f, u0, tspan, p)`.
 """
-struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUAL_CHUNK},Nothing},J<:Callable{JacSig{P,T},Nothing}}
+struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},D<:Callable{CoreDualSig{DUAL_CHUNK},Nothing},J<:Callable{CoreJacSig{T},Nothing}}
     f::F
     u0::Vector{T}
     tspan::Tuple{Float64,Float64}
@@ -240,18 +242,17 @@ struct ODEProblem{T,P,F<:Callable{RHSSig{P,T},Nothing},D<:Callable{DualSig{P,DUA
     jac::J
     fplain::UserFunction
 end
-"No Jacobian given: the library's own marker at `ODEProblem`'s `J` (never called)."
+"No Jacobian given (the four-argument form, for a user's `ODEFunction`; never called)."
 no_jacobian(J, u, p, t) = nothing
-const NoJacobian = typeof(no_jacobian)
-rhs!(prob::ODEProblem{T,P}, du::Vector{T}, u::Vector{T}, t::Float64) where {T,P} = (prob.f(du, u, prob.p, t)::Nothing; nothing)
+rhs!(prob::ODEProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (prob.f(du, u, t)::Nothing; nothing)
 "The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state, by finite differences otherwise."
 jacobian!(prob::ODEProblem{T,P,F,D,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,D,J} =
-    J === NoJacobian ? (T === Float64 ? ad_jacobian!(prob, Jm, u, t) : fd_jacobian!(prob, Jm, u, t)) :
-    (prob.jac(Jm, u, prob.p, t)::Nothing; nothing)
-"The user's function, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
-rhs_function(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J} = J === NoJacobian ? prob.fplain.f : nothing
-"The Jacobian by duals: one call of the function at the duals per chunk of `DUAL_CHUNK` columns."
-function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
+    J === CoreNoJacobian ? (D === NoDual ? fd_jacobian!(prob, Jm, u, t) : _ad_jacobian!(prob.fd, Jm, u, t)) :
+    (prob.jac(Jm, u, t)::Nothing; nothing)
+"The user's function partially evaluated, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
+rhs_function(prob::ODEProblem) = prob.fplain.f
+"The Jacobian by duals: one call of `fd` (a function at the library's duals) per chunk of `DUAL_CHUNK` columns."
+function _ad_jacobian!(fd, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
     N = DUAL_CHUNK
     n = length(u)
     ud = Vector{FDual{N}}(undef, n)
@@ -260,7 +261,7 @@ function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{F
         for j in 1:n
             ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
         end
-        prob.fd(dd, ud, prob.p, t)::Nothing
+        fd(dd, ud, t)::Nothing
         for k in 1:N
             col = c0 + k - 1
             col > n && break
@@ -298,55 +299,28 @@ end
 core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
 "The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
 core_jacobian!(m::CoreProblem{T,F,D,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,D,J} =
-    J === CoreNoJacobian ? (D === NoDual ? fd_jacobian!(m, Jm, u, t) : core_ad_jacobian!(m, Jm, u, t)) :
+    J === CoreNoJacobian ? (D === NoDual ? fd_jacobian!(m, Jm, u, t) : _ad_jacobian!(m.fd, Jm, u, t)) :
     (m.jac(Jm, u, t)::Nothing; nothing)
 core_rhs_function(m::CoreProblem) = m.fplain.f
 "The problem's right-hand side, whatever the problem: its `rhs!`, or the core's partially evaluated function."
 _rhs!(prob, du, u, t) = rhs!(prob, du, u, t)
 _rhs!(m::CoreProblem, du, u, t) = core_rhs!(m, du, u, t)
-"The core's Jacobian by duals: one call of the function per chunk of `DUAL_CHUNK` columns."
-function core_ad_jacobian!(m::CoreProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
-    N = DUAL_CHUNK
-    n = length(u)
-    ud = Vector{FDual{N}}(undef, n)
-    dd = Vector{FDual{N}}(undef, n)
-    for c0 in 1:N:n
-        for j in 1:n
-            ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
-        end
-        m.fd(dd, ud, t)::Nothing
-        for k in 1:N
-            col = c0 + k - 1
-            col > n && break
-            for i in 1:n
-                J[i, col] = ForwardDiff.partials(dd[i], k)
-            end
-        end
-    end
-    return nothing
-end
-
 """
     core_problem(prob) -> CoreProblem
 
-The outer layer's step (W-63): the problem's functions partially evaluated on its parameters. For TDE's
-`ODEProblem`, the user's function as given, in a `PartialFn` with the parameters, kept as the problem
-keeps it (`Dynamic` by default; under `compiled_for(f)`, compiled), at the plain signature and, for a
-`Float64` state without a given Jacobian, at the duals. For a problem type that implements
-`ODEProblemTrait` itself, its `rhs!` and `jacobian!` partially evaluated on the problem, `Dynamic`.
+The outer layer's step (W-63): the problem's functions partially evaluated on its parameters. TDE's
+`ODEProblem` keeps them so already (`PartialFn`): they pass as they are kept. For a problem type that
+implements `ODEProblemTrait` itself, its `rhs!` and `jacobian!` partially evaluated on the problem,
+`Dynamic`.
 """
 function core_problem(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J}
-    dyn = F <: Dynamic
-    # the function as given; a value of the trait world (a `Dynamic` made at another signature) through the problem's kept form
-    g = _uncast(prob.fplain.f)
-    r = PartialFn(g isa Union{Dynamic,Kept,Compiled} ? prob.f : g, prob.p)
     # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
-    dyn || _member_checked(prob)
-    f = dyn ? r : compiled_for(r)
-    fd = T === Float64 && J === NoJacobian ? f : compiled_for(no_dual)
-    jac = J === NoJacobian ? compiled_for(core_no_jacobian) : PartialFn(prob.jac, prob.p)
-    return CoreProblem(f, prob.u0, prob.tspan, fd, jac, UserFunction(J === NoJacobian ? r : nothing))
+    F <: Dynamic || _member_checked(prob)
+    return CoreProblem(_kept(prob.f), prob.u0, prob.tspan, _kept(prob.fd), _kept(prob.jac), prob.fplain)
 end
+"A kept function passed on with its attribute: a `Dynamic` value as it is, a compiled one cast again."
+_kept(f::Dynamic) = f
+_kept(f) = compiled_for(f)
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
 # a bounded function: `prob` is a trait object, so the trait's defaults serve what the type does not implement

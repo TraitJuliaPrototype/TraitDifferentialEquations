@@ -19,7 +19,8 @@ lorenz_jac!(J, u, p, t) = (J[1, 1] = -p[1]; J[1, 2] = p[1]; J[1, 3] = 0.0;
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
     jacobian!(pj, J, u, 0.0)
     @test J == [-10.0 10.0 0.0; 25.0 -1.0 -1.0; 2.0 1.0 -8/3]
-    @test rhs_function(pj) === nothing && rhs_function(prob) === lorenz!
+    # the right-hand side partially evaluated on the parameters (W-63)
+    @test rhs_function(pj) === nothing && rhs_function(prob) isa TraitDifferentialEquations.ODECore.PartialFn && rhs_function(prob).f === lorenz!
     @test isapprox(solve(pj, Rodas5(); abstol = 1e-10, reltol = 1e-10).u[end], REF; rtol = 1e-9)
     # a Jacobian that returns J: refused at its first call, as a right-hand side is
     badjac!(J, u, p, t) = (J .= 0.0)

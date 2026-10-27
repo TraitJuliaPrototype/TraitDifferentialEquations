@@ -65,11 +65,30 @@ Base.@nospecializeinfer function ODECore.ODEProblem(@nospecialize(f), u0::Abstra
     end
     return _problem(f, nothing, u, ts, p)
 end
-# the function at the problem's bounds: its attribute decides its form at each (traits reference §7.4);
-# the function as given beside them, for a solver that enters it at its own chunk
-_problem(@nospecialize(f), @nospecialize(jac), u0::Vector, tspan::Tuple{Float64,Float64}, p) =
-    jac === nothing ? ODECore.ODEProblem(f, u0, tspan, p, f, compiled_for(no_jacobian), UserFunction(f)) :
-                      ODECore.ODEProblem(f, u0, tspan, p, f, jac, UserFunction(f))
+# the functions partially evaluated on the parameters (W-63) at the problem's bounds, which have no parameter
+# for the parameters' type: the attribute decides each one's form (traits reference §7.4); the partially
+# evaluated function beside them, for a solver that enters it at its own chunk
+function _problem(@nospecialize(f), @nospecialize(jac), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P) where {T,P}
+    r = _partial(f, p, RHSSig{P,T})
+    # a value of the trait world is entered at each signature on its own (the same function at the duals)
+    tw = f isa Union{Dynamic,Kept,Compiled}
+    fd = T === Float64 && jac === nothing ? (tw ? _partial(f, p, DualSig{P,DUAL_CHUNK}) : r) : compiled_for(ODECore.no_dual)
+    jk = jac === nothing ? compiled_for(ODECore.core_no_jacobian) : _partial(jac, p, JacSig{P,T})
+    # a solver that picks its own chunk enters the plain function; a value of the trait world has none (its Jacobian then)
+    return ODECore.ODEProblem(r, u0, tspan, p, fd, jk, UserFunction(jac === nothing && !tw ? r : nothing))
+end
+"""
+A user's function partially evaluated on the parameters, with its attribute: `compiled_for(f)` gives a
+compiled record, `with_dynamic(f)` a dynamic one; a value of the trait world (a `Dynamic` callable,
+perhaps made at another signature) is first entered at the user's signature `S`.
+"""
+Base.@nospecializeinfer function _partial(@nospecialize(f), p, @nospecialize(S))
+    f isa TraitWorld.CompiledFor && return compiled_for(ODECore.PartialFn(getfield(f, :x), p))
+    f isa TraitWorld.WithDynamic && return with_dynamic(ODECore.PartialFn(getfield(f, :x), p))
+    f isa Union{Dynamic,Kept,Compiled} && return ODECore.PartialFn(Dynamic{Callable{S,Nothing}}(f), p)
+    return ODECore.PartialFn(f, p)
+end
+
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
 _state(u0::AbstractVector) = Vector{Float64}(u0)
