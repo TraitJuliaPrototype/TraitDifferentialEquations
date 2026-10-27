@@ -35,9 +35,8 @@ lp(u0 = U0, σ = 10.0, ρ = 28.0, β = 8 / 3) = LorenzProblem(u0, (0.0, 1.0), σ
     # a Float32 problem takes a Float32 state
     s32 = solve(lp(Float32.(U0), 10.0f0, 28.0f0, 8.0f0 / 3), Tsit5())
     @test eltype(s32.u[end]) === Float32 && isapprox(Float64.(s32.u[end]), sB.u[end]; rtol = 1e-2)
-    # the integrator's type names the parameters' type, nothing else
-    I = string(TraitDifferentialEquations.ODECore.Tsit5Integrator{Float64,LorenzParams{Float64}})
-    @test endswith(I, "Tsit5Integrator{Float64, LorenzParams{Float64}}") && length(I) < 100
+    # the integrator's type names the state's element type, nothing else: the parameters stay in the outer layer (W-63)
+    @test isconcretetype(TraitDifferentialEquations.ODECore.Tsit5Integrator{Float64})
 end
 
 @testset "Callback types (Bounce, RaiseSigma)" begin

@@ -28,8 +28,9 @@ TraitDifferentialEquations.condition(cb::OnlyCondition, u::Vector{Float64}, t::F
     @test s.retcode === :Terminated && 3.0 <= s.t[end] < 3.5
     # one integrator type for two callback sets
     pr = ODEProblem(osc!, [1.0, 0.0], (0.0, 1.0), OscP(4.0, 0.1))
-    i1 = TraitDifferentialEquations.ODECore.tsit5_init(pr, pr.u0, pr.tspan, pr.p, Any[kick, stop])
-    i2 = TraitDifferentialEquations.ODECore.tsit5_init(pr, pr.u0, pr.tspan, pr.p, Any[ContinuousCallback((u, t, i) -> u[1], i -> nothing)])
+    C = TraitDifferentialEquations.ODECore
+    i1 = C.tsit5_init(C.core_problem(pr), pr.u0, pr.tspan, C.adapt_callbacks(Any[kick, stop], Vector{Float64}, pr.p))
+    i2 = C.tsit5_init(C.core_problem(pr), pr.u0, pr.tspan, C.adapt_callbacks(Any[ContinuousCallback((u, t, i) -> u[1], i -> nothing)], Vector{Float64}, pr.p))
     @test typeof(i1) === typeof(i2)
     # a continuous callback: the bouncing ball's first contact at sqrt(2/g), the ball above the ground
     ball!(du, u, p, t) = (du[1] = u[2]; du[2] = -9.81; nothing)

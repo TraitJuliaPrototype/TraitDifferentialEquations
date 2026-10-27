@@ -50,7 +50,7 @@ end
     # two callbacks at once, and their types do not reach the integrator's type
     s4 = solve(prob, Tsit5(); callback = (kick, stop))
     @test s4.retcode === :Terminated
-    I = TraitDifferentialEquations.ODECore.Tsit5Integrator{Float64,Vector{Float64}}
+    I = TraitDifferentialEquations.ODECore.Tsit5Integrator{Float64}
     @test length(string(nameof(I))) < 100
 end
 

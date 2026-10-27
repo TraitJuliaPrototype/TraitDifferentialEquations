@@ -11,7 +11,10 @@
 #     so a new callback compiles nothing in the solver unless the caller casts it with `compiled_for`,
 #     and a callback reads `integ.p` at the problem's parameter type;
 #   - a solution is a `Trajectory{U, T}`: code over solutions is compiled per state and time type,
-#     whatever the model.
+#     whatever the model;
+#   - the parameters' type stays in the outermost layer (W-63): `solve_ode` partially evaluates the
+#     problem's functions on its parameters (`CoreProblem`) and adapts the callbacks (`ParamCallback`),
+#     so the solvers' code is compiled per state type, whatever the parameters.
 @trait_module module ODECore
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
@@ -19,7 +22,8 @@ import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, Rodas5, ODESolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
-       DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks
+       DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
+       CoreProblem, core_problem, adapt_callbacks, core_solve, StepView, StepCallback, StepEvent, ParamIntegrator
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -44,15 +48,15 @@ brings its own Jacobian, and the solver calls `jacobian!`.
     rhs_function(prob::ODEProblemTrait{T, P})::Any = nothing
 end
 
-"The default Jacobian: forward differences of `rhs!` (an internal function: `prob` is a trait object, or a problem itself)."
+"The default Jacobian: forward differences of `rhs!` (an internal function: `prob` is a trait object, a problem itself, or the core's `CoreProblem`)."
 function fd_jacobian!(prob, J::Matrix{T}, u::Vector{T}, t::Float64) where {T}
     n = length(u)
     f0 = zeros(T, n); f1 = zeros(T, n); up = copy(u)
-    rhs!(prob, f0, u, t)
+    _rhs!(prob, f0, u, t)
     for j in 1:n
         h = sqrt(eps(Float64)) * max(abs(primal(u[j])), 1.0)
         up[j] = u[j] + h
-        rhs!(prob, f1, up, t)
+        _rhs!(prob, f1, up, t)
         for i in 1:n
             J[i, j] = (f1[i] - f0[i]) / h
         end
@@ -108,6 +112,36 @@ solver locates it by bisection on the interpolant (`interp!`), moves the integra
     event_affect!(cb::EventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
 end
 
+"""
+    StepView{U, T}
+
+The integrator as the solver core's callbacks see it: `IntegratorView` without the parameters, so
+that the core's code is compiled per state type, whatever the parameters (W-63). The outer layer's
+`ParamIntegrator` gives the user's callbacks an `IntegratorView{U, T, P}` over it.
+"""
+@trait StepView{U, T} begin
+    @const u::U
+    @const t::T
+    @const dt::T
+    u_modified::Bool
+    terminated::Bool
+    step_tstop!(i::StepView{U, T}, τ::T)::Nothing
+    step_terminate!(i::StepView{U, T})::Nothing
+    step_interp!(i::StepView{U, T}, out::U, τ::T)::Nothing
+end
+
+"A discrete callback as the solver core calls it: over `StepView{U, T}`, without the parameters."
+@trait StepCallback{U, T} begin
+    step_condition(cb::StepCallback{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Bool
+    step_affect!(cb::StepCallback{U, T}, sv::Dynamic{StepView{U, T}})::Nothing
+end
+
+"A continuous callback as the solver core calls it."
+@trait StepEvent{U, T} begin
+    step_event_condition(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Float64
+    step_event_affect!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing
+end
+
 # --- the signatures of plain functions --------------------------------------------------------
 
 "The signature of a plain right-hand side `f(du, u, p, t)`, at element type `T` (`Float64`, or dual numbers for gradients through `solve`)."
@@ -132,6 +166,43 @@ const DualSig{P,N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},P,Float64}
 
 "The chunk of the Jacobian's dual numbers: fixed, so that it is no part of a problem's type (a last chunk may be partial)."
 const DUAL_CHUNK = 8
+
+# --- the solver core: the functions partially evaluated on the parameters (W-63) ------------------
+
+"The right-hand side as the solver core calls it, partially evaluated on the parameters: `f(du, u, t)`, at element type `T`."
+const CoreRHSSig{T} = Tuple{Vector{T},Vector{T},Float64}
+"The Jacobian as the solver core calls it: `jac(J, u, t)`."
+const CoreJacSig{T} = Tuple{Matrix{T},Vector{T},Float64}
+"The right-hand side at the library's duals of chunk `N`, as the solver core calls it."
+const CoreDualSig{N} = Tuple{Vector{FDual{N}},Vector{FDual{N}},Float64}
+
+"""
+    PartialFn(f, p)
+
+A function of `(a, u, p, t)` partially evaluated on the parameters: `(a, u, t) -> f(a, u, p, t)`. The
+parameters' type stays in this record, which the solver core keeps at a signature without it.
+"""
+struct PartialFn{F,P}
+    f::F
+    p::P
+end
+(r::PartialFn)(a, u, t) = r.f(a, u, r.p, t)
+"A problem type's own `rhs!`, partially evaluated on the problem (a problem that implements `ODEProblemTrait` itself)."
+struct ProblemRHS{M}
+    m::M
+end
+(r::ProblemRHS)(du, u, t) = rhs!(r.m, du, u, t)
+"A problem type's own `jacobian!` (its default: finite differences of its `rhs!`), partially evaluated on the problem."
+struct ProblemJac{M}
+    m::M
+end
+(r::ProblemJac)(J, u, t) = jacobian!(r.m, J, u, t)
+"No dual numbers: the core's Jacobian is the problem's (never called)."
+no_dual(du, u, t) = nothing
+const NoDual = typeof(no_dual)
+"No Jacobian given at the core: by the duals, else by finite differences (never called)."
+core_no_jacobian(J, u, t) = nothing
+const CoreNoJacobian = typeof(core_no_jacobian)
 
 "The user's function as given, its type hidden: what a problem keeps beside the kept forms."
 struct UserFunction
@@ -201,6 +272,86 @@ function ad_jacobian!(prob::ODEProblem{Float64}, J::Matrix{Float64}, u::Vector{F
     return nothing
 end
 @implement ODEProblemTrait{T,P} ODEProblem{T,P,F,D,J} where {T,P,F,D,J}
+
+"""
+    CoreProblem{T, F, D, J}
+
+The problem as the solver core sees it (W-63): the initial state, the time span, and the functions
+partially evaluated on the parameters, each kept at a parameter bounded by `Callable` at a signature
+without them (traits reference §7.4):
+- `f::F` at `CoreRHSSig{T}`;
+- `fd::D` at `CoreDualSig{DUAL_CHUNK}`, for the Jacobian by duals (`no_dual`: none);
+- `jac::J` at `CoreJacSig{T}` (`core_no_jacobian`: by the duals, else by finite differences);
+- `fplain`, the partially evaluated function as a plain value, for a solver that enters it at its own
+  chunk (`nothing`: none).
+Its type names no parameter type, so the solvers' code is compiled per state type. Made by
+`core_problem`, the outer layer.
+"""
+struct CoreProblem{T,F<:Callable{CoreRHSSig{T},Nothing},D<:Callable{CoreDualSig{DUAL_CHUNK},Nothing},J<:Callable{CoreJacSig{T},Nothing}}
+    f::F
+    u0::Vector{T}
+    tspan::Tuple{Float64,Float64}
+    fd::D
+    jac::J
+    fplain::UserFunction
+end
+core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
+"The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
+core_jacobian!(m::CoreProblem{T,F,D,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,D,J} =
+    J === CoreNoJacobian ? (D === NoDual ? fd_jacobian!(m, Jm, u, t) : core_ad_jacobian!(m, Jm, u, t)) :
+    (m.jac(Jm, u, t)::Nothing; nothing)
+core_rhs_function(m::CoreProblem) = m.fplain.f
+"The problem's right-hand side, whatever the problem: its `rhs!`, or the core's partially evaluated function."
+_rhs!(prob, du, u, t) = rhs!(prob, du, u, t)
+_rhs!(m::CoreProblem, du, u, t) = core_rhs!(m, du, u, t)
+"The core's Jacobian by duals: one call of the function per chunk of `DUAL_CHUNK` columns."
+function core_ad_jacobian!(m::CoreProblem{Float64}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64)
+    N = DUAL_CHUNK
+    n = length(u)
+    ud = Vector{FDual{N}}(undef, n)
+    dd = Vector{FDual{N}}(undef, n)
+    for c0 in 1:N:n
+        for j in 1:n
+            ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
+        end
+        m.fd(dd, ud, t)::Nothing
+        for k in 1:N
+            col = c0 + k - 1
+            col > n && break
+            for i in 1:n
+                J[i, col] = ForwardDiff.partials(dd[i], k)
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    core_problem(prob) -> CoreProblem
+
+The outer layer's step (W-63): the problem's functions partially evaluated on its parameters. For TDE's
+`ODEProblem`, the user's function as given, in a `PartialFn` with the parameters, kept as the problem
+keeps it (`Dynamic` by default; under `compiled_for(f)`, compiled), at the plain signature and, for a
+`Float64` state without a given Jacobian, at the duals. For a problem type that implements
+`ODEProblemTrait` itself, its `rhs!` and `jacobian!` partially evaluated on the problem, `Dynamic`.
+"""
+function core_problem(prob::ODEProblem{T,P,F,D,J}) where {T,P,F,D,J}
+    dyn = F <: Dynamic
+    # the function as given; a value of the trait world (a `Dynamic` made at another signature) through the problem's kept form
+    g = _uncast(prob.fplain.f)
+    r = PartialFn(g isa Union{Dynamic,Kept,Compiled} ? prob.f : g, prob.p)
+    # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
+    dyn || _member_checked(prob)
+    f = dyn ? r : compiled_for(r)
+    fd = T === Float64 && J === NoJacobian ? f : compiled_for(no_dual)
+    jac = J === NoJacobian ? compiled_for(core_no_jacobian) : PartialFn(prob.jac, prob.p)
+    return CoreProblem(f, prob.u0, prob.tspan, fd, jac, UserFunction(J === NoJacobian ? r : nothing))
+end
+"Nothing: the bound's first-use check of the problem type, as a member of the problem family."
+_member_checked(prob::ODEProblemTrait) = nothing
+# a bounded function: `prob` is a trait object, so the trait's defaults serve what the type does not implement
+core_problem(prob::ODEProblemTrait) =
+    CoreProblem(ProblemRHS(prob), prob.u0, prob.tspan, compiled_for(no_dual), ProblemJac(prob), UserFunction(nothing))
 
 """
     DiscreteCallback(condition, affect!)
@@ -276,6 +427,98 @@ Base.@nospecializeinfer _is_event_callback(@nospecialize(cb), @nospecialize(E)) 
 Base.@nospecializeinfer _uncast(@nospecialize(cb)) =
     cb isa TraitWorld.CompiledFor ? getfield(cb, :x) : cb isa TraitWorld.WithDynamic ? getfield(cb, :x) : cb
 
+"""
+    ParamIntegrator{U, T, P}
+
+The integrator as the user's callbacks see it (`IntegratorView{U, T, P}`), over the solver core's
+`StepView{U, T}` (W-63): the core's state (the same array), copies of its time, step and flags, and
+the parameters. The adapters copy the time, step and flags in before each of the user's functions
+and the flags back after it (a declared field is a stored field, traits reference §3.3); the
+operations go to the core's view. One per solve, shared by its callbacks.
+"""
+mutable struct ParamIntegrator{U,T,P}
+    u::U
+    t::T
+    dt::T
+    const p::P
+    u_modified::Bool
+    terminated::Bool
+    sv::Union{Nothing,Dynamic{StepView{U,T}}}
+end
+add_tstop!(i::ParamIntegrator{U,T}, τ::T) where {U,T} = (step_tstop!(i.sv::Dynamic{StepView{U,T}}, τ); nothing)
+terminate!(i::ParamIntegrator) = (i.terminated = true; nothing)
+interp!(i::ParamIntegrator{U,T}, out::U, τ::T) where {U,T} = (step_interp!(i.sv::Dynamic{StepView{U,T}}, out, τ); nothing)
+@implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
+
+function _sync_in!(pi::ParamIntegrator{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T}
+    pi.sv = sv
+    pi.u = sv.u; pi.t = sv.t; pi.dt = sv.dt
+    pi.u_modified = sv.u_modified; pi.terminated = sv.terminated
+    return nothing
+end
+_sync_out!(pi::ParamIntegrator{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (sv.u_modified = pi.u_modified; sv.terminated = pi.terminated; nothing)
+
+"A user's discrete callback, kept at the problem's types, adapted to the solver core (W-63): the outer layer's, compiled per parameter type."
+struct ParamCallback{U,T,P}
+    cb::Kept{Callback{U,T,P}}
+    pi::ParamIntegrator{U,T,P}
+    view::Dynamic{IntegratorView{U,T,P}}
+end
+step_condition(c::ParamCallback{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); condition(c.cb, u, t, c.view))
+step_affect!(c::ParamCallback{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); affect!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+@implement StepCallback{U,T} ParamCallback{U,T,P} where {U,T,P}
+
+"A user's continuous callback, adapted to the solver core."
+struct ParamEvent{U,T,P}
+    cb::Kept{EventCallback{U,T,P}}
+    pi::ParamIntegrator{U,T,P}
+    view::Dynamic{IntegratorView{U,T,P}}
+end
+step_event_condition(c::ParamEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); event_condition(c.cb, u, t, c.view))
+step_event_affect!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); event_affect!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+@implement StepEvent{U,T} ParamEvent{U,T,P} where {U,T,P}
+
+"""
+    adapt_callbacks(cbs, U, p) -> Vector{Any}
+
+The outer layer's step for callbacks (W-63): the user's callbacks entered at the problem's types
+`(U, Float64, P)` (`enter_callbacks`), each adapted to the solver core, which sees them as
+`StepCallback{U, Float64}` and `StepEvent{U, Float64}`, without the parameters.
+"""
+function adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P) where {U,P}
+    T = Float64
+    d, c = enter_callbacks(cbs, U, P)
+    pi = ParamIntegrator{U,T,P}(U(), 0.0, 0.0, p, false, false, nothing)
+    view = Dynamic{IntegratorView{U,T,P}}(pi)
+    out = Any[]
+    for k in d; push!(out, ParamCallback{U,T,P}(k, pi, view)); end
+    for k in c; push!(out, ParamEvent{U,T,P}(k, pi, view)); end
+    return out
+end
+
+"""
+The solver core's `init` step for callbacks: values of `StepCallback{U, Float64}` and
+`StepEvent{U, Float64}` (the adapted user's callbacks), kept in two vectors.
+"""
+function enter_step_callbacks(cbs::Vector{Any}, ::Type{U}) where {U}
+    T = Float64
+    d = Kept{StepCallback{U,T}}[]
+    c = Kept{StepEvent{U,T}}[]
+    for cb in cbs
+        if _is_event_callback(cb, StepEvent{U,T})
+            push!(c, _keep_fn(Kept{StepEvent{U,T}}, cb))
+        else
+            push!(d, _keep_fn(Kept{StepCallback{U,T}}, cb))
+        end
+    end
+    return d, c
+end
+
 # --- options, solution, the integrator ---------------------------------------------------------
 
 struct Tsit5 end
@@ -335,16 +578,15 @@ end
 @implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}
 
 """
-Tsit5's state between steps. Its type holds the element type and the parameters' type, nothing
-else: the callbacks are kept with their attributes (`Vector{Callback{…}}`), so their types do not
-reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
+Tsit5's state between steps. Its type holds the element type, nothing else: the parameters stay in
+the outer layer (W-63), and the callbacks are kept with their attributes (`Vector{StepCallback{…}}`),
+so their types do not reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
 """
-mutable struct Tsit5Integrator{T,P}
+mutable struct Tsit5Integrator{T}
     const u::Vector{T}
     const uprev::Vector{T}
     t::Float64
     dt::Float64
-    const p::P
     u_modified::Bool
     terminated::Bool
     const k1::Vector{T}
@@ -364,16 +606,16 @@ mutable struct Tsit5Integrator{T,P}
     tprev::Float64
     const kprev::Vector{T}
     const tstops::Vector{Float64}
-    const callbacks::Vector{Callback{Vector{T},Float64,P}}
-    const events::Vector{EventCallback{Vector{T},Float64,P}}
+    const callbacks::Vector{StepCallback{Vector{T},Float64}}
+    const events::Vector{StepEvent{Vector{T},Float64}}
     const evprev::Vector{Float64}
 end
-add_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
-terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
+step_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
+step_terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
 "The state at `τ` within the last accepted step, by the cubic Hermite interpolant (as for `saveat`)."
-interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
+step_interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
     (hermite!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, i.kprev, i.unew, i.k7); nothing)
-@implement IntegratorView Tsit5Integrator{T,P} where {T,P}
+@implement StepView Tsit5Integrator{T} where {T}
 
 "Insert `τ` into the sorted times the solver must step to; a time not ahead of `t` is ignored."
 function _add_tstop!(tstops::Vector{Float64}, t::Float64, τ::Float64)
@@ -400,21 +642,21 @@ function tsit5_step!(m, i::Tsit5Integrator{T}, dt::Float64, abstol::Float64, rel
     u, t = i.u, i.t
     k1, k2, k3, k4, k5, k6, k7, tmp, unew = i.k1, i.k2, i.k3, i.k4, i.k5, i.k6, i.k7, i.tmp, i.unew
     @inbounds for j in eachindex(u); tmp[j] = u[j] + dt * a21 * k1[j]; end
-    rhs!(m, k2, tmp, t + c1 * dt)
+    core_rhs!(m, k2, tmp, t + c1 * dt)
     @inbounds for j in eachindex(u); tmp[j] = u[j] + dt * (a31 * k1[j] + a32 * k2[j]); end
-    rhs!(m, k3, tmp, t + c2 * dt)
+    core_rhs!(m, k3, tmp, t + c2 * dt)
     @inbounds for j in eachindex(u); tmp[j] = u[j] + dt * (a41 * k1[j] + a42 * k2[j] + a43 * k3[j]); end
-    rhs!(m, k4, tmp, t + c3 * dt)
+    core_rhs!(m, k4, tmp, t + c3 * dt)
     @inbounds for j in eachindex(u); tmp[j] = u[j] + dt * (a51 * k1[j] + a52 * k2[j] + a53 * k3[j] + a54 * k4[j]); end
-    rhs!(m, k5, tmp, t + c4 * dt)
+    core_rhs!(m, k5, tmp, t + c4 * dt)
     @inbounds for j in eachindex(u)
         tmp[j] = u[j] + dt * (a61 * k1[j] + a62 * k2[j] + a63 * k3[j] + a64 * k4[j] + a65 * k5[j])
     end
-    rhs!(m, k6, tmp, t + dt)
+    core_rhs!(m, k6, tmp, t + dt)
     @inbounds for j in eachindex(u)
         unew[j] = u[j] + dt * (a71 * k1[j] + a72 * k2[j] + a73 * k3[j] + a74 * k4[j] + a75 * k5[j] + a76 * k6[j])
     end
-    rhs!(m, k7, unew, t + dt)
+    core_rhs!(m, k7, unew, t + dt)
     i.nf += 6
     # the embedded error, as OrdinaryDiffEq's calculate_residuals with the RMS norm
     acc = 0.0
@@ -436,7 +678,7 @@ function initdt(m, i::Tsit5Integrator{T}, tdir::Float64, opts::SolverOptions) wh
     h0 = min(h0, opts.dtmax)
     tmp = i.tmp
     @inbounds for j in eachindex(u); tmp[j] = u[j] + h0 * f0[j]; end
-    rhs!(m, i.k2, tmp, t + h0)
+    core_rhs!(m, i.k2, tmp, t + h0)
     i.nf += 1
     d2 = sqrt(sum(abs2(primal(i.k2[j] - f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u)) / h0
     h1 = max(d1, d2) <= 1e-15 ? max(1e-6, h0 * 1e-3) : (0.01 / max(d1, d2))^(1 / 5)
@@ -458,39 +700,53 @@ end
 # --- the driver ---------------------------------------------------------------------------------
 
 """
-    solve_ode(prob, Tsit5(), callbacks, opts) -> ODESolution
+    solve_ode(prob, alg, callbacks, opts) -> ODESolution
 
-Integrate the problem from `prob.u0` over `prob.tspan` with Tsit5 and a PI step-size controller.
-`prob.p` is what callbacks see as `integ.p`; `callbacks` are the user's callbacks as given
-(`DiscreteCallback`, `ContinuousCallback`, values of callback types), entered at the problem's types
-at `init`. The element type `T` is the state's: `Float64`, `Float32`, or a dual number for a
-gradient through the solve; the step-size control reads primal values, so a gradient follows the
-primal solve's steps. Callbacks take `Float64` states.
+Solve a problem of any type that implements `ODEProblemTrait`, the outer layer (W-63): the problem's
+functions partially evaluated on its parameters (`core_problem`), the user's callbacks (`DiscreteCallback`,
+`ContinuousCallback`, values of callback types) entered at the problem's types and adapted to the core
+(`adapt_callbacks`), then the solver core (`core_solve`), which never sees the parameters' type. What
+depends on the parameters' type is this function and the adapters: a few constructors and closures.
 """
-solve_ode(prob::ODEProblemTrait, alg::Tsit5, callbacks::Vector{Any}, opts::SolverOptions) =
-    tsit5_solve(prob, prob.u0, prob.tspan, prob.p, callbacks, opts)
+Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::Union{Tsit5,Rodas5}, callbacks::Vector{Any}, opts::SolverOptions)
+    m = core_problem(prob)
+    cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p)
+    return core_solve(m, alg, cbs, opts)
+end
 
-"Tsit5 for the problem `m` (a trait object), at its state's element type `T`."
-function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p,
+"""
+    core_solve(m::CoreProblem, Tsit5(), callbacks, opts) -> ODESolution
+
+Integrate the core's problem from `m.u0` over `m.tspan` with Tsit5 and a PI step-size controller;
+`callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
+type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the solve; the
+step-size control reads primal values, so a gradient follows the primal solve's steps. Callbacks take
+`Float64` states.
+"""
+core_solve(m::CoreProblem, alg::Tsit5, callbacks::Vector{Any}, opts::SolverOptions) =
+    tsit5_solve(m, m.u0, m.tspan, callbacks, opts)
+
+"Tsit5 for the core's problem `m`, at its state's element type `T`."
+function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64},
                      callbacks::Vector{Any}, opts::SolverOptions) where {T}
-    i = tsit5_init(m, u0, tspan, p, callbacks)
+    i = tsit5_init(m, u0, tspan, callbacks)
     return tsit5_run!(m, i, tspan[2], opts)
 end
 
 """
-Tsit5's `init`: the integrator at `(T, P)`, the user's callbacks entered at `(Vector{T}, Float64, P)`
-(`enter_callbacks`), and `f(u0, t0)`. Its type is `Tsit5Integrator{T, P}` whatever the callbacks.
+Tsit5's `init`: the integrator at `T`, the core's callbacks kept (`enter_step_callbacks`), and
+`f(u0, t0)`. Its type is `Tsit5Integrator{T}` whatever the callbacks and the parameters.
 """
-function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p, callbacks::Vector{Any}) where {T}
+function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any}) where {T}
     t0 = tspan[1]
     n = length(u0)
     T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
-    d, c = enter_callbacks(callbacks, Vector{T}, typeof(p))
+    d, c = enter_step_callbacks(callbacks, Vector{T})
     z() = zeros(T, n)
-    i = Tsit5Integrator{T,typeof(p)}(copy(u0), copy(u0), t0, 0.0, p, false, false,
-                                     z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
-                                     t0, z(), Float64[], d, c, zeros(Float64, length(c)))
-    rhs!(m, i.k1, i.u, t0)
+    i = Tsit5Integrator{T}(copy(u0), copy(u0), t0, 0.0, false, false,
+                           z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
+                           t0, z(), Float64[], d, c, zeros(Float64, length(c)))
+    core_rhs!(m, i.k1, i.u, t0)
     i.nf += 1
     return i
 end
@@ -504,8 +760,8 @@ function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
     for _ in 1:100
         tm = (tl + tr) / 2
         (tm <= tl || tm >= tr) && break
-        interp!(iv, out, tm)
-        gm = event_condition(cb, out, tm, iv)
+        step_interp!(iv, out, tm)
+        gm = step_event_condition(cb, out, tm, iv)
         if gm != 0 && (gm > 0) == (gl > 0)
             tl = tm
         else
@@ -516,11 +772,11 @@ function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
 end
 
 "Tsit5's driver: steps the integrator `i` to `tf` (or until a callback terminates it)."
-function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions) where {T,P}
+function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) where {T}
     t0 = i.t
     n = length(i.u)
     dt = initdt(m, i, 1.0, opts)
-    iv = Dynamic{IntegratorView{Vector{T},Float64,P}}(i)
+    iv = Dynamic{StepView{Vector{T},Float64}}(i)
     ts = Float64[t0]
     us = Vector{T}[copy(i.u)]
     saveat = opts.saveat
@@ -532,7 +788,7 @@ function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions
     end
     events = i.events
     for k in eachindex(events)
-        i.evprev[k] = event_condition(events[k], i.u, i.t, iv)
+        i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
     end
     # PI controller, OrdinaryDiffEq's defaults for a 5th-order method
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
@@ -567,13 +823,13 @@ function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions
             if T === Float64 && !isempty(events)
                 te = i.t
                 for k in eachindex(events)
-                    g = event_condition(events[k], i.u, i.t, iv)
+                    g = step_event_condition(events[k], i.u, i.t, iv)
                     g0 = i.evprev[k]
                     tl = i.tprev
                     if isnan(g0)                         # the step after this callback's event: its value a
                         tl = i.tprev + i.dt / 100        # little into the step (SciML's repeat nudge)
-                        interp!(iv, i.utilde, tl)
-                        g0 = event_condition(events[k], i.utilde, tl, iv)
+                        step_interp!(iv, i.utilde, tl)
+                        g0 = step_event_condition(events[k], i.utilde, tl, iv)
                     end
                     if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
                         tk = event_time(events[k], iv, i.utilde, tl, i.t, g0)
@@ -584,7 +840,7 @@ function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions
                     i.evprev[k] = g
                 end
                 if ke != 0                                   # the integrator moves to the earliest event
-                    interp!(iv, i.utilde, te)
+                    step_interp!(iv, i.utilde, te)
                     copyto!(i.u, i.utilde)
                     i.t = te
                 end
@@ -602,20 +858,20 @@ function tsit5_run!(m, i::Tsit5Integrator{T,P}, tf::Float64, opts::SolverOptions
             end
             if ke != 0
                 i.u_modified = true
-                event_affect!(events[ke], iv)
-                rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
+                step_event_affect!(events[ke], iv)
+                core_rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
                 i.nf += 1
                 i.u_modified = false
                 for k in eachindex(events)                   # the conditions again at the event's state;
-                    i.evprev[k] = k == ke ? NaN : event_condition(events[k], i.u, i.t, iv)
+                    i.evprev[k] = k == ke ? NaN : step_event_condition(events[k], i.u, i.t, iv)
                 end                                          # the event's own a little into the next step
             end
             T === Float64 && for cb in i.callbacks
-                if condition(cb, i.u, i.t, iv)
+                if step_condition(cb, i.u, i.t, iv)
                     i.u_modified = true
-                    affect!(cb, iv)
+                    step_affect!(cb, iv)
                     if i.u_modified
-                        rhs!(m, i.k1, i.u, i.t)          # the state changed: f(u, t) again
+                        core_rhs!(m, i.k1, i.u, i.t)          # the state changed: f(u, t) again
                         i.nf += 1
                         i.u_modified = false
                     end
@@ -674,27 +930,27 @@ const R5gamma = 0.19
 const R5b = [R5A[8, 1:7]..., 1.0]
 
 """
-    DualJacobian{P, N, FD}
+    DualJacobian{N, FD}
 
-The problem's plain function entered at Rodas5's `init` at the library's duals of chunk `N`,
-picked per problem from the state's length: `fd::FD` is bounded by `Callable{DualSig{P, N}, Nothing}`
-(traits reference §7.4), so `N` is the integrator's, not the problem's. With the dual buffers.
+The core's plain function (partially evaluated on the parameters) entered at Rodas5's `init` at the
+library's duals of chunk `N`, picked per problem from the state's length: `fd::FD` is bounded by
+`Callable{CoreDualSig{N}, Nothing}` (traits reference §7.4), so `N` is the integrator's, not the
+problem's. With the dual buffers.
 """
-struct DualJacobian{P,N,FD<:Callable{DualSig{P,N},Nothing}}
+struct DualJacobian{N,FD<:Callable{CoreDualSig{N},Nothing}}
     fd::FD
-    p::P
     ud::Vector{FDual{N}}
     dd::Vector{FDual{N}}
 end
 "The Jacobian by the integrator's duals: one call of the function per chunk of `N` columns."
-function dual_jacobian!(jc::DualJacobian{P,N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {P,N}
+function dual_jacobian!(jc::DualJacobian{N}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64) where {N}
     n = length(u)
     ud, dd = jc.ud, jc.dd
     for c0 in 1:N:n
         for j in 1:n
             ud[j] = FDual{N}(u[j], ForwardDiff.Partials(ntuple(k -> j == c0 + k - 1 ? 1.0 : 0.0, Val(N))))
         end
-        jc.fd(dd, ud, jc.p, t)::Nothing
+        jc.fd(dd, ud, t)::Nothing
         for k in 1:N
             col = c0 + k - 1
             col > n && break
@@ -706,16 +962,15 @@ function dual_jacobian!(jc::DualJacobian{P,N}, J::Matrix{Float64}, u::Vector{Flo
     return nothing
 end
 "Enter the plain function `f` at the duals of chunk `N` (`f` as given: a cast or a kept value keeps its attribute)."
-Base.@nospecializeinfer dual_jacobian(@nospecialize(f), p::P, n::Int, ::Val{N}) where {P,N} =
-    DualJacobian(f, p, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
+Base.@nospecializeinfer dual_jacobian(@nospecialize(f), n::Int, ::Val{N}) where {N} =
+    DualJacobian(f, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
 
 "Rodas5's state between steps: the integrator's view for callbacks, the stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the problem's `jacobian!`."
-mutable struct Rodas5Integrator{P,JC}
+mutable struct Rodas5Integrator{JC}
     const u::Vector{Float64}
     const uprev::Vector{Float64}
     t::Float64
     dt::Float64
-    const p::P
     u_modified::Bool
     terminated::Bool
     const unew::Vector{Float64}
@@ -736,12 +991,12 @@ mutable struct Rodas5Integrator{P,JC}
     const jc::JC
     tprev::Float64
     const tstops::Vector{Float64}
-    const callbacks::Vector{Callback{Vector{Float64},Float64,P}}
+    const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
 end
-add_tstop!(i::Rodas5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
-terminate!(i::Rodas5Integrator) = (i.terminated = true; nothing)
+step_tstop!(i::Rodas5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
+step_terminate!(i::Rodas5Integrator) = (i.terminated = true; nothing)
 "The state at `τ` within the last accepted step, by Rodas5's interpolant."
-function interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
+function step_interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
     θ = (τ - i.tprev) / i.dt
     θ1 = 1 - θ
     k1, k2, k3 = i.kint[1], i.kint[2], i.kint[3]
@@ -750,17 +1005,17 @@ function interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
     end
     return nothing
 end
-@implement IntegratorView Rodas5Integrator{P,JC} where {P,JC}
+@implement StepView Rodas5Integrator{JC} where {JC}
 
 "One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."
 function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, reltol::Float64)
     u, t, n = i.u, i.t, length(i.u)
     ks, du, du1, dT, ltmp, J, W, unew = i.ks, i.du, i.du1, i.dT, i.ltmp, i.J, i.W, i.unew
-    rhs!(m, i.fsal, u, t)
-    i.jc === nothing ? jacobian!(m, J, u, t) : dual_jacobian!(i.jc, J, u, t)
+    core_rhs!(m, i.fsal, u, t)
+    i.jc === nothing ? core_jacobian!(m, J, u, t) : dual_jacobian!(i.jc, J, u, t)
     i.njac += 1
     h = sqrt(eps(Float64)) * max(abs(t), 1.0)          # the time derivative, by a forward difference
-    rhs!(m, du, u, t + h)
+    core_rhs!(m, du, u, t + h)
     i.nf += 2
     @inbounds for j in 1:n; dT[j] = (du[j] - i.fsal[j]) / h; end
     dtgamma = dt * R5gamma
@@ -777,7 +1032,7 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
             unew[j] = acc
         end
         if !(stage > 2 && R5c[stage] == R5c[stage-1] && all(l -> R5A[stage, l] == R5A[stage-1, l], 1:stage-1))
-            rhs!(m, du, unew, t + R5c[stage] * dt)
+            core_rhs!(m, du, unew, t + R5c[stage] * dt)
             i.nf += 1
         end
         @inbounds for j in 1:n
@@ -815,49 +1070,48 @@ function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
 end
 
 """
-    solve_ode(prob, Rodas5(), callbacks, opts) -> ODESolution
+    core_solve(m::CoreProblem, Rodas5(), callbacks, opts) -> ODESolution
 
-Rodas5 with the problem's Jacobian (`jacobian!`: the given one or by the library's duals for TDE's
-`ODEProblem`, by finite differences or the problem type's own otherwise), or with the problem's
-function entered at `init` at duals of a chunk picked per problem (`Rodas5(chunk_size = 0)`), dense
-LU, and a PI step-size controller. `Float64` states only.
+Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
+differences), or with the core's plain function entered at `init` at duals of a chunk picked per
+problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
 """
-solve_ode(prob::ODEProblemTrait, alg::Rodas5, callbacks::Vector{Any}, opts::SolverOptions) =
-    rodas5_solve(prob, alg, prob.u0, prob.tspan, prob.p, callbacks, opts)
-rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, p, callbacks, opts) where {T} =
+core_solve(m::CoreProblem, alg::Rodas5, callbacks::Vector{Any}, opts::SolverOptions) =
+    rodas5_solve(m, alg, m.u0, m.tspan, callbacks, opts)
+rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
 """
-Rodas5's `init` for the problem `m` (a trait object): with `alg.chunk_size` an `Int` and a plain
-function from the problem (`rhs_function`), the function is entered at the duals of chunk `N` here
-(`DualJacobian`), and the driver is compiled per `N`; otherwise the problem's `jacobian!`.
+Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and a plain function from
+the problem (`core_rhs_function`), the function is entered at the duals of chunk `N` here
+(`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
 """
-function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
+function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
                       callbacks::Vector{Any}, opts::SolverOptions)
-    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
-    f = rhs_function(m)
-    f === nothing && return rodas5_run(m, u0, tspan, p, callbacks, opts, nothing)
+    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, callbacks, opts, nothing)
+    f = core_rhs_function(m)
+    f === nothing && return rodas5_run(m, u0, tspan, callbacks, opts, nothing)
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
-    jc = dual_jacobian(f, p, n, Val(N))
-    return rodas5_run(m, u0, tspan, p, callbacks, opts, jc)::ODESolution{Float64}   # a barrier per N
+    jc = dual_jacobian(f, n, Val(N))
+    return rodas5_run(m, u0, tspan, callbacks, opts, jc)::ODESolution{Float64}   # a barrier per N
 end
 
-"Rodas5 for the problem `m` (a trait object), its Jacobian by `jc` (`nothing`: the problem's `jacobian!`)."
-function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
+"Rodas5 for the core's problem `m`, its Jacobian by `jc` (`nothing`: the core's)."
+function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
                     callbacks::Vector{Any}, opts::SolverOptions, jc)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
-    d, c = enter_callbacks(callbacks, Vector{Float64}, typeof(p))
+    d, c = enter_step_callbacks(callbacks, Vector{Float64})
     isempty(c) || throw(ArgumentError("continuous callbacks: Tsit5 only"))
-    i = Rodas5Integrator{typeof(p),typeof(jc)}(copy(u0), copy(u0), t0, 0.0, p, false, false, z(),
+    i = Rodas5Integrator{typeof(jc)}(copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc,
                                     t0, Float64[], d)
-    iv = Dynamic{IntegratorView{Vector{Float64},Float64,typeof(p)}}(i)
+    iv = Dynamic{StepView{Vector{Float64},Float64}}(i)
     # the initial step: as Tsit5's driver, from f(u0)
-    rhs!(m, i.fsal, i.u, t0)
+    core_rhs!(m, i.fsal, i.u, t0)
     i.nf += 1
     sc(x) = opts.abstol + abs(x) * opts.reltol
     d0 = sqrt(sum(abs2(i.u[j] / sc(i.u[j])) for j in 1:n) / n)
@@ -907,9 +1161,9 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, p,
             i.dt = dt
             i.naccept += 1
             for cb in i.callbacks
-                if condition(cb, i.u, i.t, iv)
+                if step_condition(cb, i.u, i.t, iv)
                     i.u_modified = true
-                    affect!(cb, iv)
+                    step_affect!(cb, iv)
                     i.u_modified = false
                 end
                 i.terminated && break
