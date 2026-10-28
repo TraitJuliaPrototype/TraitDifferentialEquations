@@ -72,10 +72,10 @@ function _problem(@nospecialize(f), @nospecialize(jac), u0::Vector{T}, tspan::Tu
     r = _partial(f, p, RHSSig{P,T})
     # a value of the trait world is entered at each signature on its own (the same function at the duals)
     tw = f isa Union{Dynamic,Kept,Compiled}
-    fd = T === Float64 && jac === nothing ? (tw ? _partial(f, p, DualSig{P,DUAL_CHUNK}) : r) : compiled_for(ODECore.no_dual)
+    # the Jacobian by duals: the one function, seen at the duals where it is needed (traits reference §5.8, §6.5)
+    ad = T === Float64 && jac === nothing
     jk = jac === nothing ? compiled_for(ODECore.core_no_jacobian) : _partial(jac, p, JacSig{P,T})
-    # a solver that picks its own chunk enters the plain function; a value of the trait world has none (its Jacobian then)
-    return ODECore.ODEProblem(r, u0, tspan, p, fd, jk, UserFunction(jac === nothing && !tw ? r : nothing))
+    return ODECore.ODEProblem(r, u0, tspan, p, jk, ad, UserFunction(jac === nothing && !tw ? r : nothing))
 end
 """
 A user's function partially evaluated on the parameters, with its attribute: `compiled_for(f)` gives a
@@ -85,7 +85,12 @@ perhaps made at another signature) is first entered at the user's signature `S`.
 Base.@nospecializeinfer function _partial(@nospecialize(f), p, @nospecialize(S))
     f isa TraitWorld.CompiledFor && return compiled_for(ODECore.PartialFn(getfield(f, :x), p))
     f isa TraitWorld.WithDynamic && return with_dynamic(ODECore.PartialFn(getfield(f, :x), p))
-    f isa Union{Dynamic,Kept,Compiled} && return ODECore.PartialFn(Dynamic{Callable{S,Nothing}}(f), p)
+    # a kept function: the user's function itself, partially evaluated, with the kept value's attribute, so that
+    # the one function is seen at the duals too (traits reference §6.5)
+    if f isa Union{Dynamic,Kept,Compiled}
+        g = ODECore.PartialFn(TraitWorld._callable_fn(f), p)
+        return (f isa Compiled || (f isa Kept && getfield(f, :compiled))) ? compiled_for(g) : with_dynamic(g)
+    end
     return ODECore.PartialFn(f, p)
 end
 
