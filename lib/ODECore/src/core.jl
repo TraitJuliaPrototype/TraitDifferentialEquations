@@ -558,8 +558,7 @@ end
 @implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P}
 
 # --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
-# the operations on the kept names themselves (a helper taking `Dynamic{IndexProvider}` would be a bounded
-# function, whose entry plain inference sees returning `Any`)
+# the operations on the kept names themselves
 @implement IndexProvider ODESolution{T,P} where {T,P} begin
     variable_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : variable_index(sys, sym))
     parameter_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : parameter_index(sys, sym))
