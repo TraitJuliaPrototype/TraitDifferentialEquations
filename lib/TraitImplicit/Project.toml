@@ -1,0 +1,11 @@
+name = "TraitImplicit"
+uuid = "61965388-887a-41ff-920a-22e3a893da7c"
+version = "0.0.1"
+
+[deps]
+ODECore = "dde65c3d-a5a2-4c0b-ae11-c816328cb47b"
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+ODECore = {path = "../ODECore"}
+TraitWorld = {path = "../../../TraitWorld"}

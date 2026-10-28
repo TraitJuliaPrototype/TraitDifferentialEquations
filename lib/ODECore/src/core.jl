@@ -24,7 +24,8 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
-       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU, StepView, StepCallback, StepEvent, ParamIntegrator,
+       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU,
+       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, StepView, StepCallback, StepEvent, ParamIntegrator,
        ODEFunction
 
 # --- the traits --------------------------------------------------------------------------
@@ -570,6 +571,75 @@ end
 end
 @implement LinearSolver DenseLU begin
     lincache(ls, n) = DenseLUCache(lu!(Matrix{Float64}(LinearAlgebra.I, n, n)))
+end
+
+"""
+A nonlinear solver's state for an implicit stage of size `n`: `nlstage!(c, m, x, z, t, γdt)` solves
+`x = z + γdt f(x, t)` for the core's problem `m`, from the iterate in `x`, and returns whether it converged
+(OrdinaryDiffEq's NLsolve form). Made by a `NonlinearSolver`'s `nlcache`.
+"""
+@trait NLCache begin
+    nlstage!(c::NLCache, m::CoreProblem, x::Vector{Float64}, z::Vector{Float64}, t::Float64, γdt::Float64)::Bool
+end
+"""
+A nonlinear solver the implicit methods take (OrdinaryDiffEq's NLNewton, NLFunctional, …: an open set inside
+the implicit methods, itself taking a linear solver; stage D of move 3).
+"""
+@trait NonlinearSolver begin
+    nlcache(nl::NonlinearSolver, n::Int)::NLCache
+end
+"Newton's method, the problem's Jacobian at every iterate, its linear systems by `linsolve`: the default."
+struct Newton{L <: LinearSolver}
+    linsolve::L
+    maxiters::Int
+    tol::Float64
+end
+Newton(; linsolve = DenseLU(), maxiters = 10, tol = 1e-10) = Newton(linsolve, maxiters, tol)
+struct NewtonCache
+    lc::LinearCache                  # Kept{LinearCache}
+    maxiters::Int
+    tol::Float64
+    J::Matrix{Float64}
+    r::Vector{Float64}
+    dx::Vector{Float64}
+    fx::Vector{Float64}
+end
+"""
+Newton on `x = z + γdt f(x, t)`: the residual `r = x - z - γdt f(x, t)`, the matrix `W = I - γdt J`
+(factorized at every iterate, or with `frozen` only at the first), `x -= W \\ r` until `|r| ≤ tol`.
+A helper for nonlinear solvers of the Newton kind, in any package.
+"""
+function newton_stage!(lc::LinearCache, J::Matrix{Float64}, r::Vector{Float64}, dx::Vector{Float64}, fx::Vector{Float64},
+                       maxiters::Int, tol::Float64, frozen::Bool, m::CoreProblem, x::Vector{Float64},
+                       z::Vector{Float64}, t::Float64, γdt::Float64)::Bool
+    n = length(x)
+    for k in 1:maxiters
+        core_rhs!(m, fx, x, t)
+        res = 0.0
+        @inbounds for i in 1:n
+            r[i] = x[i] - z[i] - γdt * fx[i]
+            res = max(res, abs(r[i]))
+        end
+        res <= tol && return true
+        if k == 1 || !frozen
+            core_jacobian!(m, J, x, t)
+            @inbounds for j in 1:n, i in 1:n
+                J[i, j] = (i == j ? 1.0 : 0.0) - γdt * J[i, j]
+            end
+            linfactor!(lc, J)
+        end
+        linsolve!(lc, dx, r)
+        @inbounds for i in 1:n
+            x[i] -= dx[i]
+        end
+    end
+    return false
+end
+@implement NLCache NewtonCache begin
+    nlstage!(c, m, x, z, t, γdt) = newton_stage!(c.lc, c.J, c.r, c.dx, c.fx, c.maxiters, c.tol, false, m, x, z, t, γdt)
+end
+@implement NonlinearSolver Newton{L} where {L} begin
+    nlcache(nl, n) = NewtonCache(lincache(nl.linsolve, n), nl.maxiters, nl.tol, zeros(n, n), zeros(n), zeros(n), zeros(n))
 end
 
 """
