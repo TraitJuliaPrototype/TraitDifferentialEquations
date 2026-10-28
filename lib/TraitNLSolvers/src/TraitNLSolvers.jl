@@ -7,7 +7,7 @@ core's traits; the implicit methods do not know it.
 """
 module TraitNLSolvers
 using TraitWorld
-using ODECore: NonlinearSolver, NLCache, LinearSolver, LinearCache, lincache, DenseLU, newton_stage!
+using ODECore: NonlinearSolver, NLCache, LinearSolver, DenseLU, newton_stage!
 import ODECore: nlcache, nlstage!
 export SimplifiedNewton
 @trait_module begin
@@ -19,7 +19,7 @@ struct SimplifiedNewton{L <: LinearSolver}
 end
 SimplifiedNewton(; linsolve = DenseLU(), maxiters = 20, tol = 1e-10) = SimplifiedNewton(linsolve, maxiters, tol)
 struct SimplifiedNewtonCache
-    lc::LinearCache
+    ls::LinearSolver
     maxiters::Int
     tol::Float64
     J::Matrix{Float64}
@@ -28,10 +28,10 @@ struct SimplifiedNewtonCache
     fx::Vector{Float64}
 end
 @implement NLCache SimplifiedNewtonCache begin
-    nlstage!(c, m, x, z, t, γdt) = newton_stage!(c.lc, c.J, c.r, c.dx, c.fx, c.maxiters, c.tol, true, m, x, z, t, γdt)
+    nlstage!(c, m, x, z, t, γdt) = newton_stage!(c.ls, c.J, c.r, c.dx, c.fx, c.maxiters, c.tol, true, m, x, z, t, γdt)
 end
 @implement NonlinearSolver SimplifiedNewton{L} where {L} begin
-    nlcache(nl, n) = SimplifiedNewtonCache(lincache(nl.linsolve, n), nl.maxiters, nl.tol, zeros(n, n), zeros(n), zeros(n), zeros(n))
+    nlcache(nl, n) = SimplifiedNewtonCache(nl.linsolve, nl.maxiters, nl.tol, zeros(n, n), zeros(n), zeros(n), zeros(n))
 end
 end
 end

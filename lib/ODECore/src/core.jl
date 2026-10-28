@@ -17,7 +17,7 @@
 #     so the solvers' code is compiled per state type, whatever the parameters.
 # (the body of the trait module `ODECore`, src/ODECore.jl)
 using TraitWorld
-using LinearAlgebra: lu!, ldiv!
+using LinearAlgebra: lu!
 using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
 import TraitIndexing: variable_index, parameter_index, state_values, parameter_values
 import LinearAlgebra
@@ -26,7 +26,7 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
-       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU,
+       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
        NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, problem_sys, StepView, StepCallback, StepEvent, ParamIntegrator,
        ODEFunction
 
@@ -74,13 +74,13 @@ end
     IntegratorView{U, T, P}
 
 What a callback sees of the integrator: the state `u::U` (its contents writable), the time `t::T`,
-the last step's size `dt::T`, the parameters `p::P`, two flags, and three operations: `add_tstop!`
+the last step's size `dt::T`, the parameters `p::P` (by name: `ps[:σ]`, a `ParameterView{P}`), two flags, and three operations: `add_tstop!`
 (a time the solver must step to), `terminate!`, and `interp!(i, out, τ)`, the state at `τ` within
 the last accepted step by the solver's interpolant. `U`, `T` and `P` are defined by the fields, so
 a callback reads `integ.p` at the problem's parameter type. Each solver's integrator conforms as a
 family, by its own methods.
 """
-@trait IntegratorView{U, T, P} begin
+@trait IntegratorView{U, T, P} <: HasProperty{:ps, ParameterView{P}} begin
     @const u::U
     @const t::T
     @const dt::T
@@ -421,6 +421,9 @@ end
 add_tstop!(i::ParamIntegrator{U,T}, τ::T) where {U,T} = (step_tstop!(i.sv::Dynamic{StepView{U,T}}, τ); nothing)
 terminate!(i::ParamIntegrator) = (i.terminated = true; nothing)
 interp!(i::ParamIntegrator{U,T}, out::U, τ::T) where {U,T} = (step_interp!(i.sv::Dynamic{StepView{U,T}}, out, τ); nothing)
+@implement HasProperty{:ps, ParameterView{P}} ParamIntegrator{U,T,P} where {U,T,P} begin
+    property(i, ::Val{:ps}) = ParameterView(getfield(i, :p), getfield(i, :sys))
+end
 @implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
 # the integrator a callback sees, by name: `getstate(integ, :x)`, `getparam(integ, :σ)` (SciML's `integ[:x]`,
 # `integ.ps[:σ]`), through the traits the integrator conforms to (traits §6.5)
@@ -599,32 +602,18 @@ algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on th
 end
 
 """
-A linear solver's state for the systems `W x = b` of size `n` an implicit method solves at each step:
-`linfactor!(c, W)` takes the matrix (and may overwrite it), `linsolve!(c, x, b)` solves for the last
-matrix taken. Made by a `LinearSolver`'s `lincache`.
-"""
-@trait LinearCache begin
-    linfactor!(c::LinearCache, W::Matrix{Float64})::Nothing
-    linsolve!(c::LinearCache, x::Vector{Float64}, b::Vector{Float64})::Nothing
-end
-"""
 A linear solver an implicit method takes (LinearSolve.jl's algorithms: an open set inside the open set of
-algorithms; stage C of move 3). `lincache(ls, n)` makes its state for systems of size `n`.
+algorithms; stage C of move 3). `linfactor(ls, W)` factorizes the matrix of the systems `W x = b` an
+implicit method solves at each step (it may overwrite `W`) and returns the factorization, a `Solvable`
+(BaseTraits): `solve!(F, x, b)` solves for `x`. LinearAlgebra's factorizations are `Solvable`.
 """
 @trait LinearSolver begin
-    lincache(ls::LinearSolver, n::Int)::LinearCache
+    linfactor(ls::LinearSolver, W::Matrix{Float64})::Solvable{Float64}
 end
 "Dense LU with partial pivoting, LAPACK's: the default linear solver."
 struct DenseLU end
-mutable struct DenseLUCache
-    F::LinearAlgebra.LU{Float64,Matrix{Float64},Vector{Int}}
-end
-@implement LinearCache DenseLUCache begin
-    linfactor!(c, W) = (c.F = lu!(W); nothing)
-    linsolve!(c, x, b) = (ldiv!(x, c.F, b); nothing)
-end
 @implement LinearSolver DenseLU begin
-    lincache(ls, n) = DenseLUCache(lu!(Matrix{Float64}(LinearAlgebra.I, n, n)))
+    linfactor(ls, W) = lu!(W)
 end
 
 """
@@ -650,7 +639,7 @@ struct Newton{L <: LinearSolver}
 end
 Newton(; linsolve = DenseLU(), maxiters = 10, tol = 1e-10) = Newton(linsolve, maxiters, tol)
 struct NewtonCache
-    lc::LinearCache                  # Kept{LinearCache}
+    ls::LinearSolver                 # Kept{LinearSolver}
     maxiters::Int
     tol::Float64
     J::Matrix{Float64}
@@ -663,10 +652,11 @@ Newton on `x = z + γdt f(x, t)`: the residual `r = x - z - γdt f(x, t)`, the m
 (factorized at every iterate, or with `frozen` only at the first), `x -= W \\ r` until `|r| ≤ tol`.
 A helper for nonlinear solvers of the Newton kind, in any package.
 """
-function newton_stage!(lc::LinearCache, J::Matrix{Float64}, r::Vector{Float64}, dx::Vector{Float64}, fx::Vector{Float64},
+function newton_stage!(ls::LinearSolver, J::Matrix{Float64}, r::Vector{Float64}, dx::Vector{Float64}, fx::Vector{Float64},
                        maxiters::Int, tol::Float64, frozen::Bool, m::CoreProblem, x::Vector{Float64},
                        z::Vector{Float64}, t::Float64, γdt::Float64)::Bool
     n = length(x)
+    local F                          # the factorization of W, a Solvable
     for k in 1:maxiters
         core_rhs!(m, fx, x, t)
         res = 0.0
@@ -680,9 +670,9 @@ function newton_stage!(lc::LinearCache, J::Matrix{Float64}, r::Vector{Float64}, 
             @inbounds for j in 1:n, i in 1:n
                 J[i, j] = (i == j ? 1.0 : 0.0) - γdt * J[i, j]
             end
-            linfactor!(lc, J)
+            F = linfactor(ls, J)
         end
-        linsolve!(lc, dx, r)
+        solve!(F, dx, r)
         @inbounds for i in 1:n
             x[i] -= dx[i]
         end
@@ -690,10 +680,10 @@ function newton_stage!(lc::LinearCache, J::Matrix{Float64}, r::Vector{Float64}, 
     return false
 end
 @implement NLCache NewtonCache begin
-    nlstage!(c, m, x, z, t, γdt) = newton_stage!(c.lc, c.J, c.r, c.dx, c.fx, c.maxiters, c.tol, false, m, x, z, t, γdt)
+    nlstage!(c, m, x, z, t, γdt) = newton_stage!(c.ls, c.J, c.r, c.dx, c.fx, c.maxiters, c.tol, false, m, x, z, t, γdt)
 end
 @implement NonlinearSolver Newton{L} where {L} begin
-    nlcache(nl, n) = NewtonCache(lincache(nl.linsolve, n), nl.maxiters, nl.tol, zeros(n, n), zeros(n), zeros(n), zeros(n))
+    nlcache(nl, n) = NewtonCache(nl.linsolve, nl.maxiters, nl.tol, zeros(n, n), zeros(n), zeros(n), zeros(n))
 end
 
 """

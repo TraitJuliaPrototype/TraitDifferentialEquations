@@ -83,4 +83,12 @@ end
                           integ -> (push!(seen, getparam(integ, :ρ)); integ.terminated = true; nothing))
     s = solve(ODEProblem(f, [1.0, 0.0, 0.0], (0.0, 10.0), P0), Tsit5(); callback = cb)
     @test seen == [P0[2]] && s[:x][end] > 5.0 && s.t[end] < 10.0
+    # SciML's `integ.ps[:σ]`: a computed property through BaseTraits' `HasProperty`
+    seenps = Float64[]
+    cbps = DiscreteCallback((u, t, integ) -> getstate(integ, :x) > 5.0,
+                            integ -> (push!(seenps, integ.ps[:ρ] + integ.ps[:β]); integ.terminated = true; nothing))
+    sps = solve(ODEProblem(f, [1.0, 0.0, 0.0], (0.0, 10.0), P0), Tsit5(); callback = cbps)
+    @test seenps == [P0[2] + P0[3]] && sps.t[end] == s.t[end]
+    @test caught(() -> solve(ODEProblem(f, [1.0, 0.0, 0.0], (0.0, 10.0), P0), Tsit5();
+                             callback = DiscreteCallback((u, t, integ) -> true, integ -> (integ.ps[:w]; nothing)))) isa ArgumentError
 end

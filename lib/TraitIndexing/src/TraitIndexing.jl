@@ -9,7 +9,7 @@ record of names.
 module TraitIndexing
 using TraitWorld
 export IndexProvider, variable_index, parameter_index, ValueProvider, state_values, parameter_values,
-       SymbolCache, getstate, getparam
+       SymbolCache, getstate, getparam, ParameterView
 @trait_module begin
 "Names to indices: of the state's variables and of the parameters (`nothing`: no such name)."
 @trait IndexProvider begin
@@ -44,6 +44,16 @@ function getparam(v::(ValueProvider{U, P}, IndexProvider), sym::Symbol) where {U
     i = parameter_index(v, sym)
     i === nothing && _noname("parameter", sym)
     return parameter_values(v)[i]
+end
+"The parameters `p` by name, `ps[:σ]` (SciML's `integ.ps`): the names from `ip`, or none."
+struct ParameterView{P}
+    p::P
+    ip::Union{Nothing, Dynamic{IndexProvider}}
+end
+function Base.getindex(v::ParameterView, sym::Symbol)
+    i = v.ip === nothing ? nothing : parameter_index(v.ip, sym)
+    i === nothing && _noname("parameter", sym)
+    return v.p[i]
 end
 end
 end
