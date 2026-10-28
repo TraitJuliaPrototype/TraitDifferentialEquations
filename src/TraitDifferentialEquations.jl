@@ -16,10 +16,12 @@ import ForwardDiff
 import ODECore                       # the core, a package of its own (move 3): `TraitDifferentialEquations.ODECore`
 using ODECore
 using TraitRodas                     # a solver package: `Rodas5`
+using TraitIndexing                  # symbolic access (move 4)
 using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, SolverOptions, FDual,
-                no_jacobian, UserFunction, ODEAlgorithm, solve_core
+                no_jacobian, UserFunction, ODEAlgorithm, solve_core, getseries
 export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, ODEAlgorithm, solve_core,
-       LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+       LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU,
+       SymbolCache, IndexProvider, ValueProvider, variable_index, parameter_index, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!,
        add_tstop!, terminate!, interp!
 

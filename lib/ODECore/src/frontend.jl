@@ -16,8 +16,9 @@ struct ODEFunction{F,TJ,TMM}
     f::F
     jac::TJ
     mass_matrix::TMM
+    sys::Any                         # an `IndexProvider` (a `SymbolCache`), or `nothing`
 end
-ODEFunction(f; jac = nothing, mass_matrix = I) = ODEFunction(f, jac, mass_matrix)
+ODEFunction(f; jac = nothing, mass_matrix = I, sys = nothing) = ODEFunction(f, jac, mass_matrix, sys)
 
 """
     ODEProblem(f, u0, tspan, p = nothing)
@@ -40,21 +41,22 @@ Base.@nospecializeinfer function ODEProblem(@nospecialize(f), u0::AbstractVector
     if f isa ODEFunction
         f.mass_matrix isa UniformScaling && f.mass_matrix == I ||
             throw(ArgumentError("TraitDifferentialEquations' solvers take the identity mass matrix only"))
-        return _problem(f.f, f.jac, u, ts, p)
+        return _problem(f.f, f.jac, u, ts, p, f.sys)
     end
-    return _problem(f, nothing, u, ts, p)
+    return _problem(f, nothing, u, ts, p, nothing)
 end
 # the functions partially evaluated on the parameters (W-63) at the problem's bounds, which have no parameter
 # for the parameters' type: the attribute decides each one's form (traits reference §7.4); the partially
 # evaluated function beside them, for a solver that enters it at its own chunk
-function _problem(@nospecialize(f), @nospecialize(jac), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P) where {T,P}
+function _problem(@nospecialize(f), @nospecialize(jac), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P, @nospecialize(sys)) where {T,P}
     r = _partial(f, p, RHSSig{P,T})
     # a value of the trait world is entered at each signature on its own (the same function at the duals)
     tw = f isa Union{Dynamic,Kept,Compiled}
     # the Jacobian by duals: the one function, seen at the duals where it is needed (traits reference §5.8, §6.5)
     ad = T === Float64 && jac === nothing
     jk = jac === nothing ? compiled_for(core_no_jacobian) : _partial(jac, p, JacSig{P,T})
-    return ODEProblem(r, u0, tspan, p, jk, ad, UserFunction(jac === nothing && !tw ? r : nothing))
+    return ODEProblem(r, u0, tspan, p, jk, ad, UserFunction(jac === nothing && !tw ? r : nothing),
+                      sys === nothing ? nothing : Dynamic{IndexProvider}(sys))
 end
 """
 A user's function partially evaluated on the parameters, with its attribute: `compiled_for(f)` gives a

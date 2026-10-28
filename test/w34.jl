@@ -57,12 +57,21 @@ end
     @test ODECore.times(s) == [0.0, 0.5, 1.0] && ODECore.state(s, 3) == s.u[3]
     @test ODECore.at(s, 0.25) ≈ (s.u[1] .+ s.u[2]) ./ 2 && ODECore.at(s, 1.0) == s.u[3]
     @test caught(() -> ODECore.at(s, 2.0)) isa DomainError
-    # one solution type for a function, a callable model and a problem type
+    # one solution type for a function, a callable model and a problem type: the state's element type and the
+    # parameters' type, never the model (move 4 gives the solution its problem's parameters)
     u0 = collect(range(0.0, 1.0; length = 40))
     sc = solve(ODEProblem(ChainModel(PathGraph(40)), u0, (0.0, 1.0), [1.0, 0.1]), Tsit5())
-    @test typeof(s) === typeof(sc) === typeof(solve(Lorenz3(U0, (0.0, 1.0), P0), Tsit5())) === ODESolution{Float64}
+    @test typeof(s) === typeof(sc) === typeof(solve(Lorenz3(U0, (0.0, 1.0), P0), Tsit5())) === ODESolution{Float64,Vector{Float64}}
     @test Dynamic{Trajectory{Vector{Float64},Float64}}(s) isa Dynamic
     # a Float32 state: `at` stays at Float32 (the member check refuses `Vector{Float64}` there)
     s32 = solve(ODEProblem(lorenz!, Float32.(U0), (0.0, 1.0), Float32.(P0)), Tsit5())
     @test ODECore.at(s32, 0.5) isa Vector{Float32}
+end
+
+@testset "symbolic access (move 4): names from the problem's `sys`, by any provider" begin
+    f = ODEFunction(lorenz!; sys = SymbolCache([:x, :y, :z], [:σ, :ρ, :β]))
+    s = solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5())
+    @test s.ps[:ρ] == P0[2] && s[:z] == [u[3] for u in s.u] && getstate(s, :y) == s.u[end][2] && getparam(s, :β) == P0[3]
+    @test caught(() -> solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5())[:x]) isa ArgumentError
+    @test caught(() -> s[:w]) isa ArgumentError
 end

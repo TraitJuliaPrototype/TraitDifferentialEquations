@@ -18,6 +18,8 @@
 # (the body of the trait module `ODECore`, src/ODECore.jl)
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
+using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
+import TraitIndexing: variable_index, parameter_index, state_values, parameter_values
 import LinearAlgebra
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, SolverOptions,
@@ -25,7 +27,7 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU,
-       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, StepView, StepCallback, StepEvent, ParamIntegrator,
+       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, problem_sys, StepView, StepCallback, StepEvent, ParamIntegrator,
        ODEFunction
 
 # --- the traits --------------------------------------------------------------------------
@@ -241,6 +243,7 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     jac::J
     ad::Bool
     fplain::UserFunction
+    sys::Union{Nothing,Dynamic{IndexProvider}}    # the names of its states and parameters (move 4), or none
 end
 "No Jacobian given (the four-argument form, for a user's `ODEFunction`; never called)."
 no_jacobian(J, u, p, t) = nothing
@@ -500,14 +503,19 @@ struct SolverOptions
     saveat::Vector{Float64}          # empty: save every step
 end
 
-struct ODESolution{T}
+struct ODESolution{T,P}
     t::Vector{Float64}
     u::Vector{Vector{T}}
     retcode::Symbol
     naccept::Int
     nreject::Int
     nf::Int
+    p::P                                         # the problem's parameters, given by the outer layer (move 4)
+    sys::Union{Nothing,Dynamic{IndexProvider}}   # the problem's names, or none
 end
+"A solver's solution: no parameters, no names (the core never sees them, W-63); `solve_ode` adds them."
+ODESolution{T}(t::Vector{Float64}, u::Vector{Vector{T}}, retcode::Symbol, naccept::Int, nreject::Int, nf::Int) where {T} =
+    ODESolution{T,Nothing}(t, u, retcode, naccept, nreject, nf, nothing, nothing)
 
 """
     Trajectory{U, T}
@@ -533,7 +541,42 @@ function at(s::ODESolution{T}, τ::Float64) where {T}
     θ = T((τ - ts[k]) / (ts[k+1] - ts[k]))            # at the state's element type: a Float32 state stays Float32
     return (1 - θ) .* s.u[k] .+ θ .* s.u[k+1]
 end
-@implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}
+@implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P}
+
+# --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
+# the operations on the kept names themselves (a helper taking `Dynamic{IndexProvider}` would be a bounded
+# function, whose entry plain inference sees returning `Any`)
+@implement IndexProvider ODESolution{T,P} where {T,P} begin
+    variable_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : variable_index(sys, sym))
+    parameter_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : parameter_index(sys, sym))
+end
+# a solution's values: its final state, and its problem's parameters
+@implement ValueProvider{Vector{T},P} ODESolution{T,P} where {T,P} begin
+    state_values(s) = last(getfield(s, :u))
+    parameter_values(s) = getfield(s, :p)
+end
+"The time series of state variable `sym` (SciML's `sol[:x]`): one getter per element type, whatever the names' provider."
+function getseries(s::(Trajectory{U,Float64}, IndexProvider), sym::Symbol) where {U}
+    i = variable_index(s, sym)
+    i === nothing && throw(ArgumentError("no state variable named :$sym"))
+    ts = times(s)
+    return eltype(U)[state(s, k)[i] for k in eachindex(ts)]
+end
+"`sol.ps[:σ]`: the solution's parameters by name."
+struct ParamView{S}
+    s::S
+end
+Base.getindex(v::ParamView, sym::Symbol) = getparam(v.s, sym)
+# the sugar, by the owner of the type (move 4: for scripts; trait code reads `getseries`, `getparam`)
+Base.getindex(s::ODESolution, sym::Symbol) = getseries(s, sym)
+Base.getproperty(s::ODESolution, name::Symbol) = name === :ps ? ParamView(s) : getfield(s, name)
+"The problem's names, for its solution: `ODEProblem`'s `sys`; none for a problem type of the user's."
+problem_sys(@nospecialize(prob)) = nothing
+problem_sys(prob::ODEProblem) = prob.sys
+"The solver's solution given its problem's parameters and names (the outer layer, W-63)."
+with_problem(s::ODESolution{T}, p::P, sys) where {T,P} =
+    ODESolution{T,P}(getfield(s, :t), getfield(s, :u), getfield(s, :retcode), getfield(s, :naccept),
+                     getfield(s, :nreject), getfield(s, :nf), p, sys)
 
 """
 An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
@@ -776,7 +819,7 @@ depends on the parameters' type is this function and the adapters: a few constru
 Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
     m = core_problem(prob)
     cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p)
-    return solve_core(alg, m, cbs, opts)
+    return with_problem(solve_core(alg, m, cbs, opts), prob.p, problem_sys(prob))
 end
 
 #     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> ODESolution

@@ -1,0 +1,9 @@
+name = "TraitIndexing"
+uuid = "33517989-6c57-4017-8c1a-5a2ed17d5e8b"
+version = "0.0.1"
+
+[deps]
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+TraitWorld = {path = "../../../TraitWorld"}
