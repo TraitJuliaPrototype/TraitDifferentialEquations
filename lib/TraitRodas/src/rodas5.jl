@@ -1,14 +1,17 @@
 """
-    Rodas5(; chunk_size = nothing)
+    Rodas5(; chunk_size = nothing, linsolve = DenseLU())
 
 Rodas5 with the problem's `jacobian!` (`chunk_size = nothing`: TDE's `ODEProblem` by duals in chunks
 of `DUAL_CHUNK`), or with the problem's plain function (`rhs_function`) entered at `init` at the duals
-of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`).
+of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`). Its linear
+systems are solved by `linsolve`, any `LinearSolver` (stage C): kept as the user's object, so the solver is
+compiled per linear solver, or `with_dynamic(ls)`, compiled once for every linear solver.
 """
-struct Rodas5
+struct Rodas5{L <: LinearSolver}
     chunk_size::Union{Nothing,Int}
+    linsolve::L
 end
-Rodas5(; chunk_size = nothing) = Rodas5(chunk_size)
+Rodas5(; chunk_size = nothing, linsolve = DenseLU()) = Rodas5(chunk_size, linsolve)
 
 # --- Rodas5 (tableau from OrdinaryDiffEqRosenbrockTableaus 2.0.0; Di Marzo 1993) --------------------
 
@@ -102,6 +105,7 @@ mutable struct Rodas5Integrator{JC}
     nf::Int
     njac::Int
     const jc::JC
+    const lc::LinearCache            # Kept{LinearCache}: the linear solver's state
     tprev::Float64
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
@@ -134,9 +138,9 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
     dtgamma = dt * R5gamma
     copyto!(W, J)                                      # W = J - I / (dt γ), as OrdinaryDiffEq's W_transform
     @inbounds for k in 1:n; W[k, k] -= 1 / dtgamma; end
-    F = lu!(W)
+    linfactor!(i.lc, W)
     @inbounds for j in 1:n; ltmp[j] = i.fsal[j] + dt * R5d[1] * dT[j]; end
-    ldiv!(ks[1], F, ltmp)
+    linsolve!(i.lc, ks[1], ltmp)
     ks[1] .*= -1
     for stage in 2:8
         @inbounds for j in 1:n
@@ -153,7 +157,7 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
             for l in 1:stage-1; acc += R5C[stage, l] / dt * ks[l][j]; end
             ltmp[j] = du[j] + dt * R5d[stage] * dT[j] + acc
         end
-        ldiv!(ks[stage], F, ltmp)
+        linsolve!(i.lc, ks[stage], ltmp)
         ks[stage] .*= -1
     end
     acc2 = 0.0
@@ -187,7 +191,7 @@ end
 # Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
 # differences), or with the core's plain function entered at `init` at duals of a chunk picked per
 # problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
-@implement ODEAlgorithm Rodas5 begin
+@implement ODEAlgorithm Rodas5{L} where {L} begin
     solve_core(a, m, callbacks, opts) = rodas5_solve(m, a, m.u0, m.tspan, callbacks, opts)
 end
 rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
@@ -200,17 +204,17 @@ the problem (`core_rhs_function`), the function is entered at the duals of chunk
 """
 function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
                       callbacks::Vector{Any}, opts::SolverOptions)
-    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, callbacks, opts, nothing)
-    m isa CoreProblem && m.ad || return rodas5_run(m, u0, tspan, callbacks, opts, nothing)
+    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, callbacks, opts, nothing, lincache(alg.linsolve, length(u0)))
+    m isa CoreProblem && m.ad || return rodas5_run(m, u0, tspan, callbacks, opts, nothing, lincache(alg.linsolve, length(u0)))
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
     jc = dual_jacobian(m.f, n, Val(N))         # the problem's one function, seen at the duals of chunk `N`
-    return rodas5_run(m, u0, tspan, callbacks, opts, jc)::ODESolution{Float64}   # a barrier per N
+    return rodas5_run(m, u0, tspan, callbacks, opts, jc, lincache(alg.linsolve, n))::ODESolution{Float64}   # a barrier per N
 end
 
 "Rodas5 for the core's problem `m`, its Jacobian by `jc` (`nothing`: the core's)."
 function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-                    callbacks::Vector{Any}, opts::SolverOptions, jc)
+                    callbacks::Vector{Any}, opts::SolverOptions, jc, lc)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
@@ -218,7 +222,7 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
     isempty(c) || throw(ArgumentError("continuous callbacks: Tsit5 only"))
     i = Rodas5Integrator{typeof(jc)}(copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
-                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc,
+                                    zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, lc,
                                     t0, Float64[], d)
     iv = Dynamic{StepView{Vector{Float64},Float64}}(i)
     # the initial step: as Tsit5's driver, from f(u0)

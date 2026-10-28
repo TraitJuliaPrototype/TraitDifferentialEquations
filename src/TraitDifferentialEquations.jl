@@ -18,7 +18,8 @@ using ODECore
 using TraitRodas                     # a solver package: `Rodas5`
 using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, SolverOptions, FDual,
                 no_jacobian, UserFunction, ODEAlgorithm, solve_core
-export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, ODEAlgorithm, solve_core, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, ODEAlgorithm, solve_core,
+       LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!,
        add_tstop!, terminate!, interp!
 

@@ -12,7 +12,8 @@ using ODECore
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
 using ODECore: CoreProblem, CoreDualSig, FDual, ODESolution, SolverOptions, StepView, ODEAlgorithm,
                core_rhs!, core_jacobian!, enter_step_callbacks, _add_tstop!, event_time, step_event_condition,
-               step_condition, step_affect!, step_event_affect!
+               step_condition, step_affect!, step_event_affect!,
+               LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU
 import ODECore: solve_core, step_tstop!, step_terminate!, step_interp!
 import ForwardDiff
 using LinearAlgebra: lu!, ldiv!

@@ -18,12 +18,13 @@
 # (the body of the trait module `ODECore`, src/ODECore.jl)
 using TraitWorld
 using LinearAlgebra: lu!, ldiv!
+import LinearAlgebra
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
-       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, StepView, StepCallback, StepEvent, ParamIntegrator,
+       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, LinearCache, lincache, linfactor!, linsolve!, DenseLU, StepView, StepCallback, StepEvent, ParamIntegrator,
        ODEFunction
 
 # --- the traits --------------------------------------------------------------------------
@@ -540,6 +541,35 @@ algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on th
 """
 @trait ODEAlgorithm begin
     solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::ODESolution
+end
+
+"""
+A linear solver's state for the systems `W x = b` of size `n` an implicit method solves at each step:
+`linfactor!(c, W)` takes the matrix (and may overwrite it), `linsolve!(c, x, b)` solves for the last
+matrix taken. Made by a `LinearSolver`'s `lincache`.
+"""
+@trait LinearCache begin
+    linfactor!(c::LinearCache, W::Matrix{Float64})::Nothing
+    linsolve!(c::LinearCache, x::Vector{Float64}, b::Vector{Float64})::Nothing
+end
+"""
+A linear solver an implicit method takes (LinearSolve.jl's algorithms: an open set inside the open set of
+algorithms; stage C of move 3). `lincache(ls, n)` makes its state for systems of size `n`.
+"""
+@trait LinearSolver begin
+    lincache(ls::LinearSolver, n::Int)::LinearCache
+end
+"Dense LU with partial pivoting, LAPACK's: the default linear solver."
+struct DenseLU end
+mutable struct DenseLUCache
+    F::LinearAlgebra.LU{Float64,Matrix{Float64},Vector{Int}}
+end
+@implement LinearCache DenseLUCache begin
+    linfactor!(c, W) = (c.F = lu!(W); nothing)
+    linsolve!(c, x, b) = (ldiv!(x, c.F, b); nothing)
+end
+@implement LinearSolver DenseLU begin
+    lincache(ls, n) = DenseLUCache(lu!(Matrix{Float64}(LinearAlgebra.I, n, n)))
 end
 
 """
