@@ -4,11 +4,15 @@ version = "0.0.1"
 authors = ["Frank Hellmann"]
 
 [deps]
+TraitRodas = "bf920f43-cef2-427b-965f-14169ab0c399"
+ODECore = "dde65c3d-a5a2-4c0b-ae11-c816328cb47b"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
 
 [sources]
+ODECore = {path = "lib/ODECore"}
+TraitRodas = {path = "lib/TraitRodas"}
 TraitWorld = {path = "../TraitWorld"}
 
 [compat]
