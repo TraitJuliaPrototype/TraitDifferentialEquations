@@ -75,3 +75,12 @@ end
     @test caught(() -> solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5())[:x]) isa ArgumentError
     @test caught(() -> s[:w]) isa ArgumentError
 end
+
+@testset "symbolic access in a callback (move 4): the integrator it sees, by name" begin
+    f = ODEFunction(lorenz!; sys = SymbolCache([:x, :y, :z], [:σ, :ρ, :β]))
+    seen = Float64[]
+    cb = DiscreteCallback((u, t, integ) -> getstate(integ, :x) > 5.0,
+                          integ -> (push!(seen, getparam(integ, :ρ)); integ.terminated = true; nothing))
+    s = solve(ODEProblem(f, [1.0, 0.0, 0.0], (0.0, 10.0), P0), Tsit5(); callback = cb)
+    @test seen == [P0[2]] && s[:x][end] > 5.0 && s.t[end] < 10.0
+end

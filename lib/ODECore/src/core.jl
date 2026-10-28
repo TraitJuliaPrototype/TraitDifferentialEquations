@@ -416,11 +416,22 @@ mutable struct ParamIntegrator{U,T,P}
     u_modified::Bool
     terminated::Bool
     sv::Union{Nothing,Dynamic{StepView{U,T}}}
+    const sys::Union{Nothing,Dynamic{IndexProvider}}   # the problem's names (move 4), or none
 end
 add_tstop!(i::ParamIntegrator{U,T}, τ::T) where {U,T} = (step_tstop!(i.sv::Dynamic{StepView{U,T}}, τ); nothing)
 terminate!(i::ParamIntegrator) = (i.terminated = true; nothing)
 interp!(i::ParamIntegrator{U,T}, out::U, τ::T) where {U,T} = (step_interp!(i.sv::Dynamic{StepView{U,T}}, out, τ); nothing)
 @implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
+# the integrator a callback sees, by name: `getstate(integ, :x)`, `getparam(integ, :σ)` (SciML's `integ[:x]`,
+# `integ.ps[:σ]`), through the traits the integrator conforms to (traits §6.5)
+@implement IndexProvider ParamIntegrator{U,T,P} where {U,T,P} begin
+    variable_index(i, sym) = (sys = getfield(i, :sys); sys === nothing ? nothing : variable_index(sys, sym))
+    parameter_index(i, sym) = (sys = getfield(i, :sys); sys === nothing ? nothing : parameter_index(sys, sym))
+end
+@implement ValueProvider{U,P} ParamIntegrator{U,T,P} where {U,T,P} begin
+    state_values(i) = getfield(i, :u)
+    parameter_values(i) = getfield(i, :p)
+end
 
 function _sync_in!(pi::ParamIntegrator{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T}
     pi.sv = sv
@@ -462,10 +473,10 @@ The outer layer's step for callbacks (W-63): the user's callbacks entered at the
 `(U, Float64, P)` (`enter_callbacks`), each adapted to the solver core, which sees them as
 `StepCallback{U, Float64}` and `StepEvent{U, Float64}`, without the parameters.
 """
-function adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P) where {U,P}
+function adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P, sys = nothing) where {U,P}
     T = Float64
     d, c = enter_callbacks(cbs, U, P)
-    pi = ParamIntegrator{U,T,P}(U(), 0.0, 0.0, p, false, false, nothing)
+    pi = ParamIntegrator{U,T,P}(U(), 0.0, 0.0, p, false, false, nothing, sys)
     view = Dynamic{IntegratorView{U,T,P}}(pi)
     out = Any[]
     for k in d; push!(out, ParamCallback{U,T,P}(k, pi, view)); end
@@ -818,7 +829,7 @@ depends on the parameters' type is this function and the adapters: a few constru
 """
 Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
     m = core_problem(prob)
-    cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p)
+    cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p, problem_sys(prob))
     return with_problem(solve_core(alg, m, cbs, opts), prob.p, problem_sys(prob))
 end
 
