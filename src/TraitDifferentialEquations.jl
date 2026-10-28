@@ -18,8 +18,8 @@ using LinearAlgebra: I, UniformScaling
 include("ODECore.jl")
 using .ODECore
 using .ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, SolverOptions, FDual,
-                no_jacobian, UserFunction
-export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+                no_jacobian, UserFunction, ODEAlgorithm, solve_core
+export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, ODEAlgorithm, solve_core, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!,
        add_tstop!, terminate!, interp!
 
@@ -122,7 +122,7 @@ This front end is neither specialized nor inferred on the problem's type, so a c
 not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
 which calls the solver at that type.
 """
-Base.@nospecializeinfer solve(@nospecialize(prob), alg::Union{Tsit5,Rodas5}; @nospecialize(callback = nothing), kw...) =
+Base.@nospecializeinfer solve(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...) =   # any `ODEAlgorithm` (move 3)
     _solve(prob, alg, _cbs(callback), _options(; kw...))
 _solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
 

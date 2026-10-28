@@ -23,7 +23,7 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
-       CoreProblem, core_problem, adapt_callbacks, core_solve, StepView, StepCallback, StepEvent, ParamIntegrator
+       CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, StepView, StepCallback, StepEvent, ParamIntegrator
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -544,6 +544,15 @@ end
 @implement Trajectory{Vector{T},Float64} ODESolution{T} where {T}
 
 """
+An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
+algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on the core's problem `m`
+(its parameters partially evaluated, W-63), with the core's step callbacks.
+"""
+@trait ODEAlgorithm begin
+    solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::ODESolution
+end
+
+"""
 Tsit5's state between steps. Its type holds the element type, nothing else: the parameters stay in
 the outer layer (W-63), and the callbacks are kept with their attributes (`Vector{StepCallback{…}}`),
 so their types do not reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
@@ -671,26 +680,25 @@ end
 Solve a problem of any type that implements `ODEProblemTrait`, the outer layer (W-63): the problem's
 functions partially evaluated on its parameters (`core_problem`), the user's callbacks (`DiscreteCallback`,
 `ContinuousCallback`, values of callback types) entered at the problem's types and adapted to the core
-(`adapt_callbacks`), then the solver core (`core_solve`), which never sees the parameters' type. What
+(`adapt_callbacks`), then the algorithm's driver (`solve_core`), which never sees the parameters' type. What
 depends on the parameters' type is this function and the adapters: a few constructors and closures.
 """
-Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::Union{Tsit5,Rodas5}, callbacks::Vector{Any}, opts::SolverOptions)
+Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
     m = core_problem(prob)
     cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p)
-    return core_solve(m, alg, cbs, opts)
+    return solve_core(alg, m, cbs, opts)
 end
 
-"""
-    core_solve(m::CoreProblem, Tsit5(), callbacks, opts) -> ODESolution
-
-Integrate the core's problem from `m.u0` over `m.tspan` with Tsit5 and a PI step-size controller;
-`callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
-type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the solve; the
-step-size control reads primal values, so a gradient follows the primal solve's steps. Callbacks take
-`Float64` states.
-"""
-core_solve(m::CoreProblem, alg::Tsit5, callbacks::Vector{Any}, opts::SolverOptions) =
-    tsit5_solve(m, m.u0, m.tspan, callbacks, opts)
+#     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> ODESolution
+#
+# Integrate the core's problem from `m.u0` over `m.tspan` with Tsit5 and a PI step-size controller;
+# `callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
+# type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the solve; the
+# step-size control reads primal values, so a gradient follows the primal solve's steps. Callbacks take
+# `Float64` states.
+@implement ODEAlgorithm Tsit5 begin
+    solve_core(a, m, callbacks, opts) = tsit5_solve(m, m.u0, m.tspan, callbacks, opts)
+end
 
 "Tsit5 for the core's problem `m`, at its state's element type `T`."
 function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64},
@@ -1035,15 +1043,14 @@ function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
     return out
 end
 
-"""
-    core_solve(m::CoreProblem, Rodas5(), callbacks, opts) -> ODESolution
-
-Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
-differences), or with the core's plain function entered at `init` at duals of a chunk picked per
-problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
-"""
-core_solve(m::CoreProblem, alg::Rodas5, callbacks::Vector{Any}, opts::SolverOptions) =
-    rodas5_solve(m, alg, m.u0, m.tspan, callbacks, opts)
+#     solve_core(Rodas5(), m::CoreProblem, callbacks, opts) -> ODESolution
+#
+# Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
+# differences), or with the core's plain function entered at `init` at duals of a chunk picked per
+# problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
+@implement ODEAlgorithm Rodas5 begin
+    solve_core(a, m, callbacks, opts) = rodas5_solve(m, a, m.u0, m.tspan, callbacks, opts)
+end
 rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
