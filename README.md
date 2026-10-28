@@ -121,7 +121,7 @@ Since TraitWorld 3ba6c05, the messages of (b) and (c′) name `rhs!` and the dec
 
 Since TraitWorld's member check (2026-10-21, W-23), the `Compiled` column's two errors are an `ImplementError` at the problem's first use: the problem type is a member of the problem family that does not conform, and the message names `rhs!` at the declared arguments (`test/compiledcall.jl`).
 
-Wanted from TraitWorld: refuse such a function at the entry with `Dynamic` too (a `@test_broken` in `test/compiledcall.jl`).
+With `Dynamic` too, such a function is refused at the bound with `TraitBoundError` (TraitWorld, W-81: a kept function seen at the core's signature is checked there).
 
 **The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 10 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
 

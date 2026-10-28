@@ -45,18 +45,16 @@ end
           solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5()).u
     # a constructor never casts: a `compiled_for` function cannot be made a `Dynamic{Callable}`
     @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa TraitBoundError
-    # `Dynamic`: refused at the first call, as a MethodError for the declared arguments
-    e = caught(() -> solve(ODEProblem(oop, U0, (0.0, 1.0), P0), Tsit5()))
-    @test e isa MethodError && e.f === oop && typeof(e.args) == Tuple{Vector{Float64},Vector{Float64},Vector{Float64},Float64}
-    # and the declared result, asserted at the call
-    e = caught(() -> solve(ODEProblem(ret!, U0, (0.0, 1.0), P0), Tsit5()))
-    @test e isa TypeError && e.expected === Nothing
+    # `Dynamic`: refused at the bound, where the kept function is seen at the core's signature: no method
+    # there, or one whose result cannot be the declared `Nothing` (TraitWorld, traits reference §6.5)
+    for f in (oop, ret!)
+        e = caught(() -> solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5()))
+        @test e isa TraitBoundError && occursin("Nothing", sprint(showerror, e))
+    end
     # `Compiled`: the problem type for this function is a member of the problem family, checked at its
     # first use and refused, naming `rhs!` at the declared arguments (TraitWorld, traits reference §4.7)
     for f in (oop, ret!)
         e = caught(() -> solve(ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0), Tsit5()))
         @test e isa ImplementError && occursin("does not conform", sprint(showerror, e)) && occursin("`rhs!` at Tuple{ODEProblem{Float64, Vector{Float64}", sprint(showerror, e))
     end
-    # wanted (TraitWorld): `Dynamic` refused at the entry too, naming the function and the declared signature
-    @test_broken caught(() -> solve(ODEProblem(oop, U0, (0.0, 1.0), P0), Tsit5())) isa TraitBoundError
 end
