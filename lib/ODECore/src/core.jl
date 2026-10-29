@@ -10,8 +10,9 @@
 #     (`Vector{Callback{U, T, P}}`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
 #     so a new callback compiles nothing in the solver unless the caller casts it with `compiled_for`,
 #     and a callback reads `integ.p` at the problem's parameter type;
-#   - a solution is a `Trajectory{U, T}`: code over solutions is compiled per state and time type,
-#     whatever the model;
+#   - a solution is a `Trajectory{U, T}` (TraitArrayTools') and keeps its problem as a kept value: code over
+#     solutions is compiled per state and time type, whatever the model, and the solution's type has no
+#     axis for the problem's function or type;
 #   - the parameters' type stays in the outermost layer (W-63): `solve_ode` partially evaluates the
 #     problem's functions on its parameters (`CoreProblem`) and adapts the callbacks (`ParamCallback`),
 #     so the solvers' code is compiled per state type, whatever the parameters.
@@ -19,10 +20,12 @@
 using TraitWorld
 using LinearAlgebra: lu!
 using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
+using TraitArrayTools                # the solution as a trajectory (move 5): RecursiveArrayTools' part
+import TraitArrayTools: times, state, at
 import TraitIndexing: variable_index, parameter_index, state_values, parameter_values
 import LinearAlgebra
 import ForwardDiff
-export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, SolverOptions,
+export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, CoreSolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
@@ -254,8 +257,12 @@ jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) wh
     (prob.jac(Jm, u, t)::Nothing; nothing)
 "The user's function partially evaluated, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
 rhs_function(prob::ODEProblem) = prob.fplain.f
-"The Jacobian by duals: one call of the right-hand side, seen at the library's duals of chunk `N`, per chunk of `N` columns."
-function _ad_jacobian!(fd::Callable{CoreDualSig{N},Nothing}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64, ::Val{N}) where {N}
+"""
+The Jacobian by duals: one call of the right-hand side, seen at the library's duals of chunk `N`, per chunk of `N`
+columns. Its declared result reaches the callers compiled by facts, where the entry sees a function kept at
+another signature at `Any` (move 5: the problem kept by its solution is checked as a member of its family).
+"""
+function _ad_jacobian!(fd::Callable{CoreDualSig{N},Nothing}, J::Matrix{Float64}, u::Vector{Float64}, t::Float64, ::Val{N})::Nothing where {N}
     n = length(u)
     ud = Vector{FDual{N}}(undef, n)
     dd = Vector{FDual{N}}(undef, n)
@@ -513,6 +520,29 @@ struct SolverOptions
     saveat::Vector{Float64}          # empty: save every step
 end
 
+"""
+What a solver returns (the core's solution, W-63): the saved times and states, the return code and the
+counts. It has no problem: the core never sees the parameters. `solve_ode` makes the user's `ODESolution`
+from it.
+"""
+struct CoreSolution{T}
+    t::Vector{Float64}
+    u::Vector{Vector{T}}
+    retcode::Symbol
+    naccept::Int
+    nreject::Int
+    nf::Int
+end
+
+"""
+    ODESolution{T, P}
+
+A solution as the user sees it (SciML's move 5): the saved times `t` and states `u`, the return code, the
+counts, and the problem it solves, kept with its attribute (`sol.prob`, a `Kept{ODEProblemTrait{T, P}}`). Its
+type names the state's element type and the parameters' type, never the model or the function: one solution
+type for every function, model and problem type of those types. A `Trajectory{Vector{T}, Float64}`;
+`sol(τ)` is `at(sol, τ)`.
+"""
 struct ODESolution{T,P}
     t::Vector{Float64}
     u::Vector{Vector{T}}
@@ -520,38 +550,18 @@ struct ODESolution{T,P}
     naccept::Int
     nreject::Int
     nf::Int
-    p::P                                         # the problem's parameters, given by the outer layer (move 4)
+    prob::Kept{ODEProblemTrait{T,P}}            # the problem, kept: no axis for its function or its type
     sys::Union{Nothing,Dynamic{IndexProvider}}   # the problem's names, or none
 end
-"A solver's solution: no parameters, no names (the core never sees them, W-63); `solve_ode` adds them."
-ODESolution{T}(t::Vector{Float64}, u::Vector{Vector{T}}, retcode::Symbol, naccept::Int, nreject::Int, nf::Int) where {T} =
-    ODESolution{T,Nothing}(t, u, retcode, naccept, nreject, nf, nothing, nothing)
 
-"""
-    Trajectory{U, T}
-
-A solution as code over solutions sees it (plotting, sampling, events after the fact): the saved
-times, the state at the `k`-th of them, and the state at any time in the span (`at`). The key is the
-state type `U` and the time type `T`, never the model: TDE's `ODESolution{T}` is a
-`Trajectory{Vector{T}, Float64}` for every problem.
-"""
-@trait Trajectory{U, T} begin
-    times(s::Trajectory{U, T})::Vector{T}
-    state(s::Trajectory{U, T}, k::Int)::U
-    at(s::Trajectory{U, T}, τ::T)::U
+# the solution as a trajectory (move 5): `Trajectory` is TraitArrayTools', RecursiveArrayTools' stand-in,
+# so code over trajectories needs no solver
+@implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P} begin
+    times(s) = getfield(s, :t)
+    state(s, k) = getfield(s, :u)[k]
+    at(s, τ) = linear_at(getfield(s, :t), getfield(s, :u), τ)       # the solution keeps no interpolant
 end
-times(s::ODESolution) = s.t
-state(s::ODESolution{T}, k::Int) where {T} = s.u[k]
-"The state at `τ`, linear between the saved states (the solution keeps no interpolant)."
-function at(s::ODESolution{T}, τ::Float64) where {T}
-    ts = s.t
-    (isempty(ts) || τ < ts[1] || τ > ts[end]) && throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
-    k = searchsortedlast(ts, τ)
-    k == length(ts) && return copy(s.u[k])
-    θ = T((τ - ts[k]) / (ts[k+1] - ts[k]))            # at the state's element type: a Float32 state stays Float32
-    return (1 - θ) .* s.u[k] .+ θ .* s.u[k+1]
-end
-@implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P}
+(s::ODESolution)(τ::Real) = at(s, Float64(τ))
 
 # --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
 # the operations on the kept names themselves
@@ -562,7 +572,7 @@ end
 # a solution's values: its final state, and its problem's parameters
 @implement ValueProvider{Vector{T},P} ODESolution{T,P} where {T,P} begin
     state_values(s) = last(getfield(s, :u))
-    parameter_values(s) = getfield(s, :p)
+    parameter_values(s) = getfield(s, :prob).p
 end
 "The time series of state variable `sym` (SciML's `sol[:x]`): one getter per element type, whatever the names' provider."
 function getseries(s::(Trajectory{U,Float64}, IndexProvider), sym::Symbol) where {U}
@@ -582,10 +592,9 @@ Base.getproperty(s::ODESolution, name::Symbol) = name === :ps ? ParamView(s) : g
 "The problem's names, for its solution: `ODEProblem`'s `sys`; none for a problem type of the user's."
 problem_sys(@nospecialize(prob)) = nothing
 problem_sys(prob::ODEProblem) = prob.sys
-"The solver's solution given its problem's parameters and names (the outer layer, W-63)."
-with_problem(s::ODESolution{T}, p::P, sys) where {T,P} =
-    ODESolution{T,P}(getfield(s, :t), getfield(s, :u), getfield(s, :retcode), getfield(s, :naccept),
-                     getfield(s, :nreject), getfield(s, :nf), p, sys)
+"The solver's solution given its problem and names (the outer layer, W-63)."
+with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys) where {T,P} =
+    ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys)
 
 """
 An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
@@ -593,7 +602,7 @@ algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on th
 (its parameters partially evaluated, W-63), with the core's step callbacks.
 """
 @trait ODEAlgorithm begin
-    solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::ODESolution
+    solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::CoreSolution
 end
 
 """
@@ -815,10 +824,10 @@ depends on the parameters' type is this function and the adapters: a few constru
 Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
     m = core_problem(prob)
     cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p, problem_sys(prob))
-    return with_problem(solve_core(alg, m, cbs, opts), prob.p, problem_sys(prob))
+    return with_problem(solve_core(alg, m, cbs, opts), prob, problem_sys(prob))
 end
 
-#     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> ODESolution
+#     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> CoreSolution
 #
 # Integrate the core's problem from `m.u0` over `m.tspan` with Tsit5 and a PI step-size controller;
 # `callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
@@ -990,7 +999,7 @@ function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) 
         end
     end
     i.terminated && (retcode = :Terminated)
-    return ODESolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+    return CoreSolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
 end
 
 

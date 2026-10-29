@@ -3,12 +3,14 @@ uuid = "dde65c3d-a5a2-4c0b-ae11-c816328cb47b"
 version = "0.0.1"
 
 [deps]
+TraitArrayTools = "1b9b79cd-6bec-4e99-a18c-2677d046d2b7"
 TraitIndexing = "33517989-6c57-4017-8c1a-5a2ed17d5e8b"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
 
 [sources]
+TraitArrayTools = {path = "../TraitArrayTools"}
 TraitIndexing = {path = "../TraitIndexing"}
 TraitWorld = {path = "../../../TraitWorld"}
 

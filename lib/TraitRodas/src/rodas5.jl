@@ -186,7 +186,7 @@ function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
     return out
 end
 
-#     solve_core(Rodas5(), m::CoreProblem, callbacks, opts) -> ODESolution
+#     solve_core(Rodas5(), m::CoreProblem, callbacks, opts) -> CoreSolution
 #
 # Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
 # differences), or with the core's plain function entered at `init` at duals of a chunk picked per
@@ -209,7 +209,7 @@ function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
     jc = dual_jacobian(m.f, n, Val(N))         # the problem's one function, seen at the duals of chunk `N`
-    return rodas5_run(m, u0, tspan, callbacks, opts, jc, alg.linsolve)::ODESolution{Float64}   # a barrier per N
+    return rodas5_run(m, u0, tspan, callbacks, opts, jc, alg.linsolve)::CoreSolution{Float64}   # a barrier per N
 end
 
 "Rodas5 for the core's problem `m`, its Jacobian by `jc` (`nothing`: the core's)."
@@ -292,5 +292,5 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
         end
     end
     i.terminated && (retcode = :Terminated)
-    return ODESolution{Float64}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+    return CoreSolution{Float64}(ts, us, retcode, i.naccept, i.nreject, i.nf)
 end

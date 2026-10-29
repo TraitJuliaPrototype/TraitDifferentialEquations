@@ -10,7 +10,7 @@ using TraitWorld
 using ODECore
 # the solver API: the core's problem and its calls, the dual numbers the core keys its problems' functions
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
-using ODECore: CoreProblem, CoreDualSig, FDual, ODESolution, SolverOptions, StepView, ODEAlgorithm,
+using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, StepView, ODEAlgorithm,
                core_rhs!, core_jacobian!, enter_step_callbacks, _add_tstop!, event_time, step_event_condition,
                step_condition, step_affect!, step_event_affect!,
                LinearSolver, linfactor, DenseLU

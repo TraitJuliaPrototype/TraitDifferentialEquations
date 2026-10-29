@@ -68,6 +68,33 @@ end
     @test ODECore.at(s32, 0.5) isa Vector{Float32}
 end
 
+@testset "W-34 move 5: the solution keeps its problem; DiffEqArray; plotpoints" begin
+    prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
+    s = solve(prob, Tsit5(); saveat = 0.0:0.5:1.0)
+    # the problem, kept: its declared fields and operations, and no axis for its function or type
+    @test s.prob isa Kept{ODEProblemTrait{Float64,Vector{Float64}}}
+    @test s.prob.u0 == U0 && s.prob.tspan == (0.0, 1.0) && s.prob.p === prob.p
+    du = zeros(3); rhs!(s.prob, du, U0, 0.0)
+    du0 = zeros(3); lorenz!(du0, U0, P0, 0.0)
+    @test du == du0
+    sk = solve(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), Tsit5())
+    sr = solve(prob, Rodas5())
+    sl = solve(Lorenz3(U0, (0.0, 1.0), P0), Rodas5())
+    @test typeof(sk) === typeof(sr) === typeof(sl) === typeof(s) === ODESolution{Float64,Vector{Float64}}
+    @test sl.prob.p == P0
+    # `sol(τ)` is `at`
+    @test s(0.25) == ODECore.at(s, 0.25)
+    # DiffEqArray: a trajectory from anywhere
+    a = DiffEqArray(s.u, s.t)
+    @test a isa DiffEqArray{Float64} && Dynamic{Trajectory{Vector{Float64},Float64}}(a) isa Dynamic
+    @test a(0.25) == s(0.25) && caught(() -> a(2.0)) isa DomainError
+    @test caught(() -> DiffEqArray([[1.0]], [0.0, 1.0])) isa DimensionMismatch
+    # plotpoints: the points (t, u[i]), the same for a solution and a DiffEqArray of its states
+    m = plotpoints(s, 2)
+    @test m == hcat(s.t, [u[2] for u in s.u]) && m == plotpoints(a, 2)
+    @test plotpoints(solve(ODEProblem(lorenz!, Float32.(U0), (0.0, 1.0), Float32.(P0)), Tsit5()), 1) isa Matrix{Float64}
+end
+
 @testset "symbolic access (move 4): names from the problem's `sys`, by any provider" begin
     f = ODEFunction(lorenz!; sys = SymbolCache([:x, :y, :z], [:σ, :ρ, :β]))
     s = solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5())

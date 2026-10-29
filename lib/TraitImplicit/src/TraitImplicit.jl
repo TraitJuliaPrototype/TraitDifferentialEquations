@@ -7,7 +7,7 @@ its stages solved by any `NonlinearSolver` (Newton by default), which solves its
 """
 module TraitImplicit
 using TraitWorld
-using ODECore: CoreProblem, ODESolution, SolverOptions, ODEAlgorithm, NonlinearSolver, NLCache, nlcache, nlstage!, Newton
+using ODECore: CoreProblem, CoreSolution, SolverOptions, ODEAlgorithm, NonlinearSolver, NLCache, nlcache, nlstage!, Newton
 import ODECore: solve_core
 export ImplicitEuler
 @trait_module begin
@@ -22,7 +22,7 @@ struct ImplicitEuler{N <: NonlinearSolver}
     nlsolve::N
 end
 ImplicitEuler(; dt = 0.01, nlsolve = Newton()) = ImplicitEuler(dt, nlsolve)
-function ie_solve(a::ImplicitEuler, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::ODESolution
+function ie_solve(a::ImplicitEuler, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::CoreSolution
     isempty(callbacks) || throw(ArgumentError("ImplicitEuler takes no callbacks"))
     u0 = m.u0
     u0 isa Vector{Float64} || throw(ArgumentError("ImplicitEuler takes Float64 states"))
@@ -37,13 +37,13 @@ function ie_solve(a::ImplicitEuler, m::CoreProblem, callbacks::Vector{Any}, opts
     while t < tf
         dt = min(a.dt, tf - t)
         copyto!(x, u)
-        nlstage!(c, m, x, u, t + dt, dt) || return ODESolution{Float64}(ts, us, :ConvergenceFailure, length(ts) - 1, 0, 0)
+        nlstage!(c, m, x, u, t + dt, dt) || return CoreSolution{Float64}(ts, us, :ConvergenceFailure, length(ts) - 1, 0, 0)
         copyto!(u, x)
         t += dt
         push!(ts, t)
         push!(us, copy(u))
     end
-    return ODESolution{Float64}(ts, us, :Success, length(ts) - 1, 0, 0)
+    return CoreSolution{Float64}(ts, us, :Success, length(ts) - 1, 0, 0)
 end
 @implement ODEAlgorithm ImplicitEuler{N} where {N} begin
     solve_core(a, m, callbacks, opts) = ie_solve(a, m, callbacks, opts)

@@ -1,0 +1,12 @@
+name = "TraitArrayTools"
+uuid = "1b9b79cd-6bec-4e99-a18c-2677d046d2b7"
+version = "0.0.1"
+
+[deps]
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+TraitWorld = {path = "../../../TraitWorld"}
+
+[compat]
+julia = "1.13"
