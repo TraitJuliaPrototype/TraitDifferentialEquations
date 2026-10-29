@@ -49,31 +49,22 @@ end
 # for the parameters' type: the attribute decides each one's form (traits reference §7.4); the partially
 # evaluated function beside them, for a solver that enters it at its own chunk
 function _problem(@nospecialize(f), @nospecialize(jac), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P, @nospecialize(sys)) where {T,P}
-    r = _partial(f, p, RHSSig{P,T})
+    r = _partial(f, p)
     # a value of the trait world is entered at each signature on its own (the same function at the duals)
     tw = f isa Union{Dynamic,Kept,Compiled}
     # the Jacobian by duals: the one function, seen at the duals where it is needed (traits reference §5.8, §6.5)
     ad = T === Float64 && jac === nothing
-    jk = jac === nothing ? compiled_for(core_no_jacobian) : _partial(jac, p, JacSig{P,T})
+    jk = jac === nothing ? compiled_for(core_no_jacobian) : _partial(jac, p)
     return ODEProblem(r, u0, tspan, p, jk, ad, UserFunction(jac === nothing && !tw ? r : nothing),
                       sys === nothing ? nothing : Dynamic{IndexProvider}(sys))
 end
 """
-A user's function partially evaluated on the parameters, with its attribute: `compiled_for(f)` gives a
-compiled record, `with_dynamic(f)` a dynamic one; a value of the trait world (a `Dynamic` callable,
-perhaps made at another signature) is first entered at the user's signature `S`.
+A user's function partially evaluated on the parameters, with its attribute (`rewrap`, traits reference
+§6.4): `compiled_for(f)` gives a compiled record, `with_dynamic(f)` a dynamic one. A kept function (a
+`Dynamic` callable, perhaps made at another signature) gives the user's function itself, partially
+evaluated, so that the one function is seen at each signature, the duals too (§6.5).
 """
-Base.@nospecializeinfer function _partial(@nospecialize(f), p, @nospecialize(S))
-    f isa TraitWorld.CompiledFor && return compiled_for(PartialFn(getfield(f, :x), p))
-    f isa TraitWorld.WithDynamic && return with_dynamic(PartialFn(getfield(f, :x), p))
-    # a kept function: the user's function itself, partially evaluated, with the kept value's attribute, so that
-    # the one function is seen at the duals too (traits reference §6.5)
-    if f isa Union{Dynamic,Kept,Compiled}
-        g = PartialFn(TraitWorld._callable_fn(f), p)
-        return (f isa Compiled || (f isa Kept && getfield(f, :compiled))) ? compiled_for(g) : with_dynamic(g)
-    end
-    return PartialFn(f, p)
-end
+Base.@nospecializeinfer _partial(@nospecialize(f), p) = rewrap(Base.Fix2(PartialFn, p), f)
 
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)

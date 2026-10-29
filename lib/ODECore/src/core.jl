@@ -385,19 +385,20 @@ function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
         elseif cb isa ContinuousCallback
             push!(c, FunctionEventCallback{U,T,P}(_keep_fn(Kept{Callable{CondSig{U,T,P},Float64}}, cb.condition),
                                                   _keep_fn(Kept{Callable{AffectSig{U,T,P},Nothing}}, cb.affect!)))
-        elseif _is_event_callback(cb, EventCallback{U,T,P})
-            push!(c, _keep_fn(Kept{EventCallback{U,T,P}}, cb))
         else
-            push!(d, _keep_fn(Kept{Callback{U,T,P}}, cb))
+            _enter_callback!(d, c, cb)
         end
     end
     return d, c
 end
-"Whether a callback value is a continuous one: a kept value of `EventCallback`, a cast of one, or a value of a type that conforms."
-Base.@nospecializeinfer _is_event_callback(@nospecialize(cb), @nospecialize(E)) =
-    cb isa Kept{E} || cb isa Dynamic{E} || cb isa Compiled{E} || conforms(typeof(_uncast(cb)), E)
-Base.@nospecializeinfer _uncast(@nospecialize(cb)) =
-    cb isa TraitWorld.CompiledFor ? getfield(cb, :x) : cb isa TraitWorld.WithDynamic ? getfield(cb, :x) : cb
+# a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which sees
+# through casts and kept values; a value of both traits is a continuous one
+_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::EventCallback{U,T,P}) where {U,T,P} =
+    (push!(c, Kept{EventCallback{U,T,P}}(cb)); nothing)
+_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::Callback{U,T,P}) where {U,T,P} =
+    (push!(d, Kept{Callback{U,T,P}}(cb)); nothing)
+_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::(EventCallback{U,T,P}, Callback{U,T,P})) where {U,T,P} =
+    (push!(c, Kept{EventCallback{U,T,P}}(cb)); nothing)
 
 """
     ParamIntegrator{U, T, P}
@@ -496,14 +497,17 @@ function enter_step_callbacks(cbs::Vector{Any}, ::Type{U}) where {U}
     d = Kept{StepCallback{U,T}}[]
     c = Kept{StepEvent{U,T}}[]
     for cb in cbs
-        if _is_event_callback(cb, StepEvent{U,T})
-            push!(c, _keep_fn(Kept{StepEvent{U,T}}, cb))
-        else
-            push!(d, _keep_fn(Kept{StepCallback{U,T}}, cb))
-        end
+        _enter_step_callback!(d, c, cb)
     end
     return d, c
 end
+
+_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::StepEvent{U,T}) where {U,T} =
+    (push!(c, Kept{StepEvent{U,T}}(cb)); nothing)
+_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::StepCallback{U,T}) where {U,T} =
+    (push!(d, Kept{StepCallback{U,T}}(cb)); nothing)
+_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::(StepEvent{U,T}, StepCallback{U,T})) where {U,T} =
+    (push!(c, Kept{StepEvent{U,T}}(cb)); nothing)
 
 # --- options, solution, the integrator ---------------------------------------------------------
 
