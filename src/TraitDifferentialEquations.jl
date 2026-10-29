@@ -18,30 +18,33 @@ using ODECore
 using TraitRodas                     # a solver package: `Rodas5`
 using TraitIndexing                  # symbolic access (move 4)
 using TraitArrayTools: DiffEqArray, plotpoints   # the solution as a trajectory (move 5)
-using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, SolverOptions, FDual,
+using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, init_ode, SolverOptions, FDual,
                 no_jacobian, UserFunction, ODEAlgorithm, solve_core, getseries
-export ODEFunction, ODEProblem, solve, gradient, Tsit5, Rodas5, ODEAlgorithm, solve_core,
+export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rodas5, ODEAlgorithm, ODEStepper, solve_core,
        LinearSolver, linfactor, DenseLU,
        SymbolCache, IndexProvider, ValueProvider, variable_index, parameter_index, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
-       rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!,
-       add_tstop!, terminate!, interp!, DiffEqArray, plotpoints
+       rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!, event_affect_neg!,
+       add_tstop!, terminate!, interp!, auto_dt_reset!, save_discretes!, parameters_at, DiffEqArray, plotpoints,
+       HasMassMatrix, HasJacobianPrototype, HasSystem, HasCallbacks, getsystem
 
 # the user's callbacks as given (`DiscreteCallback`, `ContinuousCallback`, values of callback types):
 # a solver's `init` enters them at the problem's types
 Base.@nospecializeinfer _cbs(@nospecialize(cb)) = cb === nothing ? Any[] : Any[cb]
 Base.@nospecializeinfer _cbs(@nospecialize(cbs::Union{Tuple,AbstractVector})) = Any[cb for cb in cbs]
 
-_options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[]) =
-    SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)))
+_options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[], tstops = Float64[]) =
+    SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)),
+                  sort!(Vector{Float64}(collect(tstops))))
 
 """
-    solve(prob, Tsit5(); callback = nothing, saveat = [], abstol, reltol, dtmax, maxiters)
+    solve(prob, Tsit5(); callback = nothing, saveat = [], tstops = [], abstol, reltol, dtmax, maxiters)
     solve(prob, Rodas5(); …)
 
 Solve a problem of any type that implements `ODEProblemTrait`: TDE's `ODEProblem`, or a problem
 type of its own (`@implement ODEProblemTrait MyProblem`), whose solver code is compiled for that
 type. Rodas5 takes `Float64` states and the problem's `jacobian!`, or with `Rodas5(chunk_size = 0)` the problem's
-function at duals of a chunk picked from the state's length.
+function at duals of a chunk picked from the state's length. The problem's callbacks (`ODEProblem(…; callback)`)
+come before `callback`; `tstops` are times the solver steps to exactly.
 
 This front end is neither specialized nor inferred on the problem's type, so a caller's code does
 not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
@@ -52,6 +55,18 @@ Base.@nospecializeinfer solve(@nospecialize(prob), @nospecialize(alg); @nospecia
 _solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
 "The default algorithm (move 3, check 4): the umbrella's own `solve`, Tsit5."
 Base.@nospecializeinfer solve(@nospecialize(prob); kw...) = solve(prob, Tsit5(); kw...)
+
+"""
+    init(prob, Tsit5(); callback = nothing, saveat, tstops, abstol, reltol, dtmax, maxiters) -> integrator
+    init(prob, Rodas5(); …)
+
+SciML's `init`: the integrator at the start of the span, for `step!(integ)`, `step!(integ, dt, stop_at_tdt)`
+and `solve!(integ)`, with the keywords of `solve`. It is what callbacks see (`IntegratorView`): `integ.u`,
+`integ.t`, `integ.p`, `add_tstop!`, `terminate!`, `getstate`, `getsystem`. Any algorithm that can be stepped
+(`ODEStepper`: Tsit5, Rodas5).
+"""
+Base.@nospecializeinfer init(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...) =
+    init_ode(prob, alg, _cbs(callback), _options(; kw...))
 
 # --- gradients through `solve` (row 5) --------------------------------------------------------------
 

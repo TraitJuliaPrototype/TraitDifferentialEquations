@@ -81,8 +81,14 @@ end
 Base.@nospecializeinfer dual_jacobian(@nospecialize(f), n::Int, ::Val{N}) where {N} =
     DualJacobian(f, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
 
-"Rodas5's state between steps: the integrator's view for callbacks, the stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the problem's `jacobian!`."
-mutable struct Rodas5Integrator{JC}
+"""
+Rodas5's state between steps, with its problem and the driver's state: the integrator's view for callbacks, the
+stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the
+problem's `jacobian!`. After an accepted step `uprev` is its start, `unew` its end and `kint` its interpolant's
+terms, until the next step.
+"""
+mutable struct Rodas5Integrator{JC,M}
+    const m::M
     const u::Vector{Float64}
     const uprev::Vector{Float64}
     t::Float64
@@ -109,20 +115,34 @@ mutable struct Rodas5Integrator{JC}
     tprev::Float64
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
+    const events::Vector{StepEvent{Vector{Float64},Float64}}
+    const evprev::Vector{Float64}
+    const utilde::Vector{Float64}
+    # the driver's state between steps
+    iv::Union{Nothing,Dynamic{StepView{Vector{Float64},Float64}}}
+    const opts::SolverOptions
+    const tf::Float64
+    dtnext::Float64
+    const ts::Vector{Float64}
+    const us::Vector{Vector{Float64}}
+    isave::Int
+    iters::Int
+    retcode::Symbol
+    dt_reset::Bool
 end
 step_tstop!(i::Rodas5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
 step_terminate!(i::Rodas5Integrator) = (i.terminated = true; nothing)
-"The state at `τ` within the last accepted step, by Rodas5's interpolant."
+"The state at `τ` within the last accepted step, by Rodas5's interpolant (`uprev` to `unew`)."
 function step_interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
-    θ = (τ - i.tprev) / i.dt
-    θ1 = 1 - θ
-    k1, k2, k3 = i.kint[1], i.kint[2], i.kint[3]
-    @inbounds for j in eachindex(out)
-        out[j] = θ1 * i.uprev[j] + θ * (i.u[j] + θ1 * (k1[j] + θ * (k2[j] + θ * k3[j])))
-    end
+    rodas5_interp!(out, (τ - i.tprev) / i.dt, i.uprev, i.unew, i.kint)
     return nothing
 end
-@implement StepView Rodas5Integrator{JC} where {JC}
+step_dt_reset!(i::Rodas5Integrator) = (i.dt_reset = true; nothing)
+@implement StepView Rodas5Integrator{JC,M} where {JC,M}
+@implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M} begin
+    advance!(i) = rodas5_advance!(i)
+    core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf)
+end
 
 "One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."
 function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, reltol::Float64)
@@ -176,12 +196,12 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
     return sqrt(acc2 / n)
 end
 
-"Rodas5's interpolant between `u` (at θ = 0) and `unew` (θ = 1)."
-function rodas5_interp!(out::Vector{Float64}, θ::Float64, i::Rodas5Integrator)
+"Rodas5's interpolant between `u0` (at θ = 0) and `u1` (θ = 1), with the step's terms `kint`."
+function rodas5_interp!(out::Vector{Float64}, θ::Float64, u0::Vector{Float64}, u1::Vector{Float64}, kint::Vector{Vector{Float64}})
     θ1 = 1 - θ
-    k1, k2, k3 = i.kint[1], i.kint[2], i.kint[3]
+    k1, k2, k3 = kint[1], kint[2], kint[3]
     @inbounds for j in eachindex(out)
-        out[j] = θ1 * i.u[j] + θ * (i.unew[j] + θ1 * (k1[j] + θ * (k2[j] + θ * k3[j])))
+        out[j] = θ1 * u0[j] + θ * (u1[j] + θ1 * (k1[j] + θ * (k2[j] + θ * k3[j])))
     end
     return out
 end
@@ -191,10 +211,16 @@ end
 # Rodas5 with the core's Jacobian (`core_jacobian!`: the given one, by the library's duals, or by finite
 # differences), or with the core's plain function entered at `init` at duals of a chunk picked per
 # problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
+# Discrete and continuous callbacks; the driver is the integrator's `advance!`, so `init` steps it too.
 @implement ODEAlgorithm Rodas5{L} where {L} begin
     solve_core(a, m, callbacks, opts) = rodas5_solve(m, a, m.u0, m.tspan, callbacks, opts)
 end
+@implement ODEStepper Rodas5{L} where {L} begin
+    init_core(a, m, callbacks, opts) = rodas5_init(m, a, m.u0, m.tspan, callbacks, opts)
+end
 rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
+    throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
+rodas5_init(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
 """
@@ -202,52 +228,88 @@ Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and a
 the problem (`core_rhs_function`), the function is entered at the duals of chunk `N` here
 (`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
 """
-function rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-                      callbacks::Vector{Any}, opts::SolverOptions)
-    alg.chunk_size === nothing && return rodas5_run(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
-    m isa CoreProblem && m.ad || return rodas5_run(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
+function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
+                     callbacks::Vector{Any}, opts::SolverOptions)
+    alg.chunk_size === nothing && return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
+    m isa CoreProblem && m.ad || return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
     jc = dual_jacobian(m.f, n, Val(N))         # the problem's one function, seen at the duals of chunk `N`
-    return rodas5_run(m, u0, tspan, callbacks, opts, jc, alg.linsolve)::CoreSolution{Float64}   # a barrier per N
+    return rodas5_start(m, u0, tspan, callbacks, opts, jc, alg.linsolve)
 end
+"Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step; a barrier per chunk."
+rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any}, opts::SolverOptions) =
+    _rodas5_run(rodas5_init(m, alg, u0, tspan, callbacks, opts))::CoreSolution{Float64}
+_rodas5_run(i::Rodas5Integrator) = run_to_end!(i)
 
-"Rodas5 for the core's problem `m`, its Jacobian by `jc` (`nothing`: the core's)."
-function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-                    callbacks::Vector{Any}, opts::SolverOptions, jc, ls)
+"""
+Rodas5's integrator for the core's problem `m`, its Jacobian by `jc` (`nothing`: the core's): the core's callbacks
+kept, the times to stop at, the callbacks' `initialize`, the first step's size from `f(u0)` (as Tsit5's driver),
+the first save and the continuous callbacks' conditions at the start.
+"""
+function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
+                      callbacks::Vector{Any}, opts::SolverOptions, jc, ls)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
     d, c = enter_step_callbacks(callbacks, Vector{Float64})
-    isempty(c) || throw(ArgumentError("continuous callbacks: Tsit5 only"))
-    i = Rodas5Integrator{typeof(jc)}(copy(u0), copy(u0), t0, 0.0, false, false, z(),
+    i = Rodas5Integrator{typeof(jc),typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, ls,
-                                    t0, Float64[], d)
+                                    t0, Float64[], d, c, zeros(Float64, length(c)), z(),
+                                    nothing, opts, tf, 0.0, Float64[], Vector{Float64}[], 1, 0, :Default, false)
     iv = Dynamic{StepView{Vector{Float64},Float64}}(i)
-    # the initial step: as Tsit5's driver, from f(u0)
-    core_rhs!(m, i.fsal, i.u, t0)
+    i.iv = iv
+    for τ in opts.tstops
+        _add_tstop!(i.tstops, t0, τ)
+    end
+    isempty(callbacks) || initialize_step_callbacks!(i.callbacks, i.events, i.u, i.t, iv)
+    i.u_modified = false
+    i.dtnext = rodas5_initdt!(i)
+    _save_start!(i.ts, i.us, i.u, t0, opts.saveat) && (i.isave = 2)
+    for k in eachindex(i.events)
+        i.evprev[k] = step_event_condition(i.events[k], i.u, i.t, iv)
+    end
+    return i
+end
+
+"The first step's size: as Tsit5's driver's start, from `f(u, t)` (in `fsal`); also `auto_dt_reset!`'s."
+function rodas5_initdt!(i::Rodas5Integrator)
+    m, opts, n = i.m, i.opts, length(i.u)
+    core_rhs!(m, i.fsal, i.u, i.t)
     i.nf += 1
     sc(x) = opts.abstol + abs(x) * opts.reltol
     d0 = sqrt(sum(abs2(i.u[j] / sc(i.u[j])) for j in 1:n) / n)
     d1 = sqrt(sum(abs2(i.fsal[j] / sc(i.u[j])) for j in 1:n) / n)
-    dt = min((d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1, opts.dtmax)
-    ts = Float64[t0]
-    us = Vector{Float64}[copy(u0)]
-    saveat = opts.saveat
-    isave = 1
-    if !isempty(saveat) && saveat[1] == t0
-        isave = 2
-    elseif !isempty(saveat)
-        empty!(ts); empty!(us)
+    return min((d0 < 1e-5 || d1 < 1e-5) ? 1e-6 : 0.01 * d0 / d1, opts.dtmax)
+end
+
+"""
+Rodas5's `advance!`: one accepted step (rejected attempts within it), its continuous callbacks' events (bisection
+on the interpolant, as Tsit5's), the saves, then the discrete callbacks; `false` when it cannot step.
+"""
+function rodas5_advance!(i::Rodas5Integrator)
+    m, opts, tf = i.m, i.opts, i.tf
+    iv = i.iv::Dynamic{StepView{Vector{Float64},Float64}}
+    events = i.events
+    if i.u_modified                                  # changed between steps: the conditions again
+        for k in eachindex(events)
+            i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
+        end
+        i.u_modified = false
     end
+    if i.dt_reset
+        i.dtnext = rodas5_initdt!(i)
+        i.dt_reset = false
+    end
+    n = length(i.u)
+    saveat = opts.saveat
+    dt = i.dtnext
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
-    retcode = :Success
-    iters = 0
     while i.t < tf && !i.terminated
-        iters += 1
-        if iters > opts.maxiters
-            retcode = :MaxIters
+        i.iters += 1
+        if i.iters > opts.maxiters
+            i.retcode = :MaxIters
             break
         end
         dt = min(dt, tf - i.t)
@@ -259,22 +321,40 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
         EEst = rodas5_step!(m, i, dt, opts.abstol, opts.reltol)
         q11 = EEst^beta1
         if EEst <= 1.0
-            tnew = tstop_hit ? popfirst!(i.tstops) : i.t + dt
-            if isempty(saveat)
-                push!(ts, tnew); push!(us, copy(i.unew))
-            else
-                while isave <= length(saveat) && saveat[isave] <= tnew
-                    push!(ts, saveat[isave])
-                    push!(us, rodas5_interp!(zeros(Float64, n), (saveat[isave] - i.t) / dt, i))
-                    isave += 1
-                end
-            end
+            tnew = tstop_hit ? i.tstops[1] : i.t + dt
             copyto!(i.uprev, i.u)
             copyto!(i.u, i.unew)
             i.tprev = i.t
             i.t = tnew
             i.dt = dt
             i.naccept += 1
+            ke, up = 0, false
+            if !isempty(events)
+                ke, te, up = locate_events!(events, i.evprev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
+                if ke != 0                                   # the integrator moves to the earliest event
+                    step_interp!(iv, i.utilde, te)
+                    copyto!(i.u, i.utilde)
+                    i.t = te
+                end
+            end
+            tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
+            if isempty(saveat)
+                push!(i.ts, i.t); push!(i.us, copy(i.u))
+            else
+                while i.isave <= length(saveat) && saveat[i.isave] <= i.t
+                    push!(i.ts, saveat[i.isave])
+                    push!(i.us, rodas5_interp!(zeros(Float64, n), (saveat[i.isave] - i.tprev) / dt, i.uprev, i.unew, i.kint))
+                    i.isave += 1
+                end
+            end
+            if ke != 0
+                i.u_modified = true
+                event_affect_dir!(events[ke], iv, up)
+                i.u_modified = false
+                for k in eachindex(events)                   # the conditions again at the event's state;
+                    i.evprev[k] = k == ke ? NaN : step_event_condition(events[k], i.u, i.t, iv)
+                end                                          # the event's own a little into the next step
+            end
             for cb in i.callbacks
                 if step_condition(cb, i.u, i.t, iv)
                     i.u_modified = true
@@ -286,11 +366,13 @@ function rodas5_run(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
             q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
             dt = min(dt / q, opts.dtmax)
             i.qold = max(EEst, 1e-4)
+            i.dtnext = dt
+            return true
         else
             i.nreject += 1
             dt = dt / min(1 / qmin, q11 / gamma)
         end
     end
-    i.terminated && (retcode = :Terminated)
-    return CoreSolution{Float64}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+    i.dtnext = dt
+    return false
 end

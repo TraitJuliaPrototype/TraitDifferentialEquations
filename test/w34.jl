@@ -33,8 +33,9 @@ lorenz_jac!(J, u, p, t) = (J[1, 1] = -p[1]; J[1, 2] = p[1]; J[1, 3] = 0.0;
     @test solve(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), Rodas5(chunk_size = 0); abstol = 1e-10, reltol = 1e-10).u == r.u
     # a problem type of its own has no plain function: its jacobian! (finite differences here)
     @test solve(Lorenz3(U0, (0.0, 1.0), P0), Rodas5(chunk_size = 0)).u == solve(Lorenz3(U0, (0.0, 1.0), P0), Rodas5()).u
-    # a mass matrix other than I is refused
-    @test caught(() -> ODEProblem(ODEFunction(lorenz!; mass_matrix = [1.0 0 0; 0 1 0; 0 0 0]), U0, (0.0, 1.0), P0)) isa ArgumentError
+    # a mass matrix other than I: the problem keeps it, and the solvers, which take none, refuse it (open issue 119)
+    pm = ODEProblem(ODEFunction(lorenz!; mass_matrix = [1.0 0 0; 0 1 0; 0 0 0]), U0, (0.0, 1.0), P0)
+    @test caught(() -> solve(pm, Tsit5())) isa ArgumentError && caught(() -> solve(pm, Rodas5())) isa ArgumentError
 end
 
 @testset "W-34: a callable model enters form B (ChainModels)" begin

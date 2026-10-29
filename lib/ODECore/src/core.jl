@@ -18,7 +18,8 @@
 #     so the solvers' code is compiled per state type, whatever the parameters.
 # (the body of the trait module `ODECore`, src/ODECore.jl)
 using TraitWorld
-using LinearAlgebra: lu!
+import TraitWorld: solve!          # BaseTraits' `solve!` (a `Solvable`'s), extended for `init`'s integrator
+using LinearAlgebra: lu!, I, UniformScaling
 using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
 using TraitArrayTools                # the solution as a trajectory (move 5): RecursiveArrayTools' part
 import TraitArrayTools: times, state, at
@@ -30,8 +31,11 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
-       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, problem_sys, StepView, StepCallback, StepEvent, ParamIntegrator,
-       ODEFunction
+       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, ParamIntegrator,
+       ODEFunction, HasMassMatrix, mass_matrix, HasJacobianPrototype, jac_prototype, HasSystem, system, getsystem,
+       HasCallbacks, problem_callbacks, takes_mass_matrix, auto_dt_reset!, save_discretes!, parameters_at,
+       initialize!, event_initialize!, event_affect_neg!, no_initialize,
+       CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -79,9 +83,12 @@ end
 What a callback sees of the integrator: the state `u::U` (its contents writable), the time `t::T`,
 the last step's size `dt::T`, the parameters `p::P` (by name: `ps[:σ]`, a `ParameterView{P}`), two flags, and three operations: `add_tstop!`
 (a time the solver must step to), `terminate!`, and `interp!(i, out, τ)`, the state at `τ` within
-the last accepted step by the solver's interpolant. `U`, `T` and `P` are defined by the fields, so
-a callback reads `integ.p` at the problem's parameter type. Each solver's integrator conforms as a
-family, by its own methods.
+the last accepted step by the solver's interpolant; `auto_dt_reset!`, the next step's size estimated again
+from the state (after a callback changed the state or the parameters), and `save_discretes!`, the
+parameters saved at the current time into the solution (after a callback changed them: SciML's
+`save_discretes!`; `parameters_at(sol, τ)` reads them back). `U`, `T` and `P` are defined by the fields, so
+a callback reads `integ.p` at the problem's parameter type. The outer layer's `ParamIntegrator` conforms;
+it is also what `init` returns.
 """
 @trait IntegratorView{U, T, P} <: HasProperty{:ps, ParameterView{P}} begin
     @const u::U
@@ -93,19 +100,23 @@ family, by its own methods.
     add_tstop!(i::IntegratorView{U, T, P}, τ::T)::Nothing
     terminate!(i::IntegratorView{U, T, P})::Nothing
     interp!(i::IntegratorView{U, T, P}, out::U, τ::T)::Nothing
+    auto_dt_reset!(i::IntegratorView{U, T, P})::Nothing
+    save_discretes!(i::IntegratorView{U, T, P})::Nothing
 end
 
 """
     Callback{U, T, P}
 
 A discrete callback, checked after every accepted step: `condition` decides, `affect!` acts on the
-integrator, which it sees as a `Dynamic{IntegratorView{U, T, P}}`. The integrator keeps its callbacks
-as `Vector{Callback{U, T, P}}`, so their types reach neither the integrator's type nor the driver.
+integrator, which it sees as a `Dynamic{IntegratorView{U, T, P}}`; `initialize!` runs once at the solver's
+`init`, at the initial state (SciML's `initialize`: for example, times to stop at). The integrator keeps its
+callbacks as `Vector{Callback{U, T, P}}`, so their types reach neither the integrator's type nor the driver.
 A callback type implements it at the problem's types: `@implement Callback{Vector{Float64}, Float64, P} MyCallback`.
 """
 @trait Callback{U, T, P} begin
     condition(cb::Callback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Bool
     affect!(cb::Callback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
+    initialize!(cb::Callback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = nothing
 end
 
 """
@@ -113,11 +124,15 @@ end
 
 A continuous callback: an event where the scalar `event_condition` changes sign within a step; the
 solver locates it by bisection on the interpolant (`interp!`), moves the integrator to it, and calls
-`event_affect!`.
+`event_affect!` where the condition rises through zero (from negative), `event_affect_neg!` where it
+falls (SciML's `affect!` and `affect_neg!`; by default the same). Every crossing is an event.
+`event_initialize!` runs once at the solver's `init`.
 """
 @trait EventCallback{U, T, P} begin
     event_condition(cb::EventCallback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Float64
     event_affect!(cb::EventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
+    event_affect_neg!(cb::EventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = event_affect!(cb, integ)
+    event_initialize!(cb::EventCallback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = nothing
 end
 
 """
@@ -136,19 +151,146 @@ that the core's code is compiled per state type, whatever the parameters (W-63).
     step_tstop!(i::StepView{U, T}, τ::T)::Nothing
     step_terminate!(i::StepView{U, T})::Nothing
     step_interp!(i::StepView{U, T}, out::U, τ::T)::Nothing
+    step_dt_reset!(i::StepView{U, T})::Nothing
 end
 
 "A discrete callback as the solver core calls it: over `StepView{U, T}`, without the parameters."
 @trait StepCallback{U, T} begin
     step_condition(cb::StepCallback{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Bool
     step_affect!(cb::StepCallback{U, T}, sv::Dynamic{StepView{U, T}})::Nothing
+    step_initialize!(cb::StepCallback{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing = nothing
 end
 
-"A continuous callback as the solver core calls it."
+"A continuous callback as the solver core calls it: `step_event_affect!` on a rising crossing, `step_event_affect_neg!` on a falling one."
 @trait StepEvent{U, T} begin
     step_event_condition(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Float64
     step_event_affect!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing
+    step_event_affect_neg!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing = step_event_affect!(cb, sv)
+    step_event_initialize!(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing = nothing
 end
+
+"""
+What a solver returns (the core's solution, W-63): the saved times and states, the return code and the
+counts. It has no problem: the core never sees the parameters. `solve_ode` makes the user's `ODESolution`
+from it.
+"""
+struct CoreSolution{T}
+    t::Vector{Float64}
+    u::Vector{Vector{T}}
+    retcode::Symbol
+    naccept::Int
+    nreject::Int
+    nf::Int
+end
+
+"""
+    CoreIntegrator{U, T}
+
+A solver's integrator as the outer layer drives it (SciML's `init`, `step!`, `solve!`): `advance!` takes one
+accepted step, with its events, saves and callbacks, and returns `false` when it cannot step (at the end of
+the span, terminated, or a failure); `core_solution` is what it saved so far, with the return code. The same
+value is the callbacks' `StepView{U, T}`. Made by a steppable algorithm's `init_core` (`ODEStepper`).
+"""
+@trait CoreIntegrator{U, T} begin
+    advance!(i::CoreIntegrator{U, T})::Bool
+    core_solution(i::CoreIntegrator{U, T})::CoreSolution
+end
+
+# --- optional properties of a problem's function, and of a problem (open issue 119) -------------
+
+"""
+    HasMassMatrix
+
+A value with a mass matrix `M` (SciML's `f.mass_matrix`): the problem `M du/dt = f(u, p, t)`. Implemented by
+a problem's function type (a callable model, `ODEFunction`) or a problem type. The front end reads it at the
+problem's construction (`ODEProblem`), and `solve` and `init` refuse a mass matrix other than the identity
+for an algorithm that does not take one (`takes_mass_matrix`).
+"""
+@trait HasMassMatrix begin
+    mass_matrix(x::HasMassMatrix)::Any
+end
+
+"""
+    HasJacobianPrototype
+
+A value with a Jacobian's sparsity prototype (SciML's `f.jac_prototype`), or `nothing`. A hint: the problem
+keeps it for the solvers that use one; a solver that does not computes the dense Jacobian, with the same
+results.
+"""
+@trait HasJacobianPrototype begin
+    jac_prototype(x::HasJacobianPrototype)::Any
+end
+
+"""
+    HasSystem
+
+A value that carries a system object (SciML's `f.sys`, `prob.f.sys`, `sol.prob.f.sys`, `integ.f.sys`;
+SymbolicIndexingInterface's `symbolic_container`): the model's own description, which TDE keeps and gives
+back unchanged (`getsystem`). A problem's function type implements it (a callable model returns itself);
+`ODEFunction`, TDE's problem, its solution and its integrator carry the one their function gave. Where the
+system is an `IndexProvider`, its names serve `sol[:x]` and `getstate`.
+"""
+@trait HasSystem begin
+    system(x::HasSystem)::Any
+end
+
+"""
+    HasCallbacks
+
+A problem that keeps callbacks (SciML's `ODEProblem(…; callback)`): `solve` and `init` take them before the
+ones they are given.
+"""
+@trait HasCallbacks begin
+    problem_callbacks(x::HasCallbacks)::Vector{Any}
+end
+
+"""
+    getsystem(x)
+
+The system object `x` carries (`HasSystem`: a problem, a solution, an integrator, a callback's view of it, a model),
+or `nothing`.
+"""
+getsystem(x::HasSystem) = system(x)
+getsystem(x) = nothing
+
+# The front end's reads of a function's or a problem's optional properties: the trait's, or the default. A kept
+# value (a function kept at `Callable`) is read through its kept trait only: at a bound its held object does not
+# conform to, TraitWorld raises `TraitBoundError` where a plain value reaches the ordinary fallback (traits §5.5,
+# §6.5; a candidate open issue, E-239). Casts (`compiled_for`, `with_dynamic`) are seen through.
+"Whether `x` is a kept value (`Dynamic{X}`, `Compiled{X}`, `Kept{X}`)."
+_iskept(@nospecialize(x)) = x isa Union{Dynamic,Compiled,Kept}
+"The system object `x` carries, or `nothing`."
+Base.@nospecializeinfer _system(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasSystem) ? nothing : getsystem(x)
+"""
+The mass matrix `x` carries (`HasMassMatrix`), or the identity. A callable object (not a function: a closure's
+captured variables are its fields) or a problem with a `mass_matrix` property other than the identity that does
+not declare the trait (SciML's convention reads the property) is refused: solving it as an ODE would ignore the
+mass matrix.
+"""
+Base.@nospecializeinfer _mass_matrix(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasMassMatrix) ? I : _mass_matrix_of(x)
+_mass_matrix_of(x::HasMassMatrix) = mass_matrix(x)
+Base.@nospecializeinfer function _mass_matrix_of(@nospecialize(x))
+    !(x isa Function) && hasproperty(x, :mass_matrix) && !_is_identity(getproperty(x, :mass_matrix)) && throw(ArgumentError(string(
+        "a value of type ", nameof(typeof(x)), " has a property `mass_matrix` other than the identity but does not ",
+        "implement `HasMassMatrix`: declare it (`@implement HasMassMatrix …`), so that the solvers see it")))
+    return I
+end
+"Whether a mass matrix is the identity: then the problem is an ODE."
+_is_identity(M::UniformScaling) = M == I
+_is_identity(M::AbstractMatrix) = M == I
+_is_identity(@nospecialize(M)) = false
+"The Jacobian prototype `x` carries (`HasJacobianPrototype`), or `nothing`."
+Base.@nospecializeinfer _jac_prototype(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasJacobianPrototype) ? nothing : _jac_prototype_of(x)
+_jac_prototype_of(x::HasJacobianPrototype) = jac_prototype(x)
+_jac_prototype_of(x) = nothing
+"The callbacks a problem keeps (`HasCallbacks`), or none."
+Base.@nospecializeinfer _problem_callbacks(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasCallbacks) ? Any[] : _problem_callbacks_of(x)
+_problem_callbacks_of(x::HasCallbacks) = problem_callbacks(x)
+_problem_callbacks_of(x) = Any[]
+"A system's names, where it provides them (`IndexProvider`), kept `Dynamic`; else `nothing`."
+Base.@nospecializeinfer _names(@nospecialize(s)) = _iskept(s) && !conforms(typeof(s), IndexProvider) ? nothing : _names_of(s)
+_names_of(s::IndexProvider) = Dynamic{IndexProvider}(s)
+_names_of(s) = nothing
 
 # --- the signatures of plain functions --------------------------------------------------------
 
@@ -235,8 +377,11 @@ whatever the function and the parameters:
 - `fplain`, the partially evaluated function as a plain value, beside the kept ones (`rhs_function`):
   a solver that picks its own dual chunk enters it at its `init` (Rodas5's `chunk_size`). Held in a
   `UserFunction`, so that no constructor is specialized on the function's type.
-`p` is what callbacks see as `integ.p`, the same object the kept functions hold. Made by the front end
-`ODEProblem(f, u0, tspan, p)`.
+`p` is what callbacks see as `integ.p`, the same object the kept functions hold. The optional properties
+its function carried (open issue 119), each read at the front end and kept as given: the system object
+(`HasSystem`) with its names where it provides them, the mass matrix (`HasMassMatrix`), the Jacobian
+prototype (`HasJacobianPrototype`); and the callbacks it keeps (`HasCallbacks`). Made by the front end
+`ODEProblem(f, u0, tspan, p; callback)`.
 """
 struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T},Nothing}}
     f::F
@@ -246,7 +391,11 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     jac::J
     ad::Bool
     fplain::UserFunction
-    sys::Union{Nothing,Dynamic{IndexProvider}}    # the names of its states and parameters (move 4), or none
+    sys::Any                                       # the system object, or nothing
+    names::Union{Nothing,Dynamic{IndexProvider}}   # its names (move 4), where it provides them
+    mass_matrix::Any                               # the identity, or the function's
+    jac_prototype::Any                             # nothing, or the function's
+    callbacks::Vector{Any}                         # the callbacks it keeps
 end
 "No Jacobian given (the four-argument form, for a user's `ODEFunction`; never called)."
 no_jacobian(J, u, p, t) = nothing
@@ -282,6 +431,18 @@ function _ad_jacobian!(fd::Callable{CoreDualSig{N},Nothing}, J::Matrix{Float64},
     return nothing
 end
 @implement ODEProblemTrait{T,P} ODEProblem{T,P,F,J} where {T,P,F,J}
+@implement HasSystem ODEProblem{T,P,F,J} where {T,P,F,J} begin
+    system(x) = getfield(x, :sys)
+end
+@implement HasMassMatrix ODEProblem{T,P,F,J} where {T,P,F,J} begin
+    mass_matrix(x) = getfield(x, :mass_matrix)
+end
+@implement HasJacobianPrototype ODEProblem{T,P,F,J} where {T,P,F,J} begin
+    jac_prototype(x) = getfield(x, :jac_prototype)
+end
+@implement HasCallbacks ODEProblem{T,P,F,J} where {T,P,F,J} begin
+    problem_callbacks(x) = getfield(x, :callbacks)
+end
 
 """
     CoreProblem{T, F, D, J}
@@ -330,41 +491,59 @@ core_problem(prob::ODEProblemTrait) =
     CoreProblem(ProblemRHS(prob), prob.u0, prob.tspan, ProblemJac(prob), false)
 
 """
-    DiscreteCallback(condition, affect!)
-    ContinuousCallback(condition, affect!)
+    DiscreteCallback(condition, affect!; initialize = no_initialize)
+    ContinuousCallback(condition, affect!, affect_neg! = affect!; initialize = no_initialize)
 
-The user's callback from two plain functions (SciML's): `condition(u, t, integ)::Bool` (discrete) or
-`::Float64` (continuous: an event where it changes sign), and `affect!(integ)`. They keep the functions
+The user's callback from plain functions (SciML's): `condition(u, t, integ)::Bool` (discrete) or
+`::Float64` (continuous: an event where it changes sign), `affect!(integ)`; for a continuous callback
+`affect_neg!(integ)` where the condition falls through zero (`affect!` where it rises); `initialize(u, t, integ)`,
+called once at the solver's `init` (SciML's `initialize`, without the callback argument). They keep the functions
 before the problem's types are known, each with its attribute (`Kept{Callable}`, traits reference §7.5);
-a solver's `init` enters them at `(U, T, P)` (`enter_callbacks`).
+a solver's `init` enters them at `(U, T, P)` (`enter_callbacks`). Every crossing is an event: an affect
+of `nothing` (SciML's "not an event in this direction") is refused.
 """
 struct DiscreteCallback
     condition::Callable              # Kept{Callable}: a function kept without a signature
     affect!::Callable
-    Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a)) = new(Kept{Callable}(c), Kept{Callable}(a))
+    initialize::Callable
+    Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a); @nospecialize(initialize = no_initialize)) =
+        new(Kept{Callable}(c), Kept{Callable}(_affect(a)), Kept{Callable}(initialize))
 end
 struct ContinuousCallback
     condition::Callable
     affect!::Callable
-    Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a)) = new(Kept{Callable}(c), Kept{Callable}(a))
+    affect_neg!::Callable
+    initialize::Callable
+    Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a), @nospecialize(an = a); @nospecialize(initialize = no_initialize)) =
+        new(Kept{Callable}(c), Kept{Callable}(_affect(a)), Kept{Callable}(_affect(an)), Kept{Callable}(initialize))
 end
+"A callback's `initialize` that does nothing (the default)."
+no_initialize(u, t, integ) = nothing
+Base.@nospecializeinfer _affect(@nospecialize(a)) = a === nothing ?
+    throw(ArgumentError("an affect of `nothing` is not taken: every crossing is an event (pass a function that does nothing)")) : a
 
-"A discrete callback as the integrator keeps it: two plain functions entered at the problem's types, each kept with its attribute (`Kept{Callable{…}}`)."
+"A discrete callback as the integrator keeps it: its plain functions entered at the problem's types, each kept with its attribute (`Kept{Callable{…}}`)."
 struct FunctionCallback{U,T,P}
     cond::Callable{CondSig{U,T,P},Bool}
     aff::Callable{AffectSig{U,T,P},Nothing}
+    init::Callable{CondSig{U,T,P},Nothing}
 end
 condition(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
 affect!(cb::FunctionCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
+initialize!(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.init(u, t, integ); nothing)
 @implement Callback{U,T,P} FunctionCallback{U,T,P} where {U,T,P}
 
 "A continuous callback as the integrator keeps it."
 struct FunctionEventCallback{U,T,P}
     cond::Callable{CondSig{U,T,P},Float64}
     aff::Callable{AffectSig{U,T,P},Nothing}
+    affneg::Callable{AffectSig{U,T,P},Nothing}
+    init::Callable{CondSig{U,T,P},Nothing}
 end
 event_condition(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
 event_affect!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
+event_affect_neg!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.affneg(integ); nothing)
+event_initialize!(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.init(u, t, integ); nothing)
 @implement EventCallback{U,T,P} FunctionEventCallback{U,T,P} where {U,T,P}
 
 """
@@ -381,9 +560,9 @@ function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
     c = Kept{EventCallback{U,T,P}}[]
     for cb in cbs
         if cb isa DiscreteCallback
-            push!(d, FunctionCallback{U,T,P}(cb.condition, cb.affect!))
+            push!(d, FunctionCallback{U,T,P}(cb.condition, cb.affect!, cb.initialize))
         elseif cb isa ContinuousCallback
-            push!(c, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!))
+            push!(c, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!, cb.affect_neg!, cb.initialize))
         else
             _enter_callback!(d, c, cb)
         end
@@ -402,11 +581,15 @@ _enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{
 """
     ParamIntegrator{U, T, P}
 
-The integrator as the user's callbacks see it (`IntegratorView{U, T, P}`), over the solver core's
-`StepView{U, T}` (W-63): the core's state (the same array), copies of its time, step and flags, and
-the parameters. The adapters copy the time, step and flags in before each of the user's functions
-and the flags back after it (a declared field is a stored field, traits reference §3.3); the
-operations go to the core's view. One per solve, shared by its callbacks.
+The integrator as the user sees it (`IntegratorView{U, T, P}`): what callbacks see, and what `init` returns.
+Over the solver core's `StepView{U, T}` (W-63): the core's state (the same array), copies of its time, step
+and flags, and the parameters. The adapters copy the time, step and flags in before each of the user's
+functions and the flags back after it (a declared field is a stored field, traits reference §3.3); the
+operations go to the core's view. One per solve, shared by its callbacks. It also keeps:
+- the problem's system object and names (`HasSystem`, move 4);
+- the parameters saved by `save_discretes!` (times `pt`, values `pu`; the problem's at the start), for the solution;
+- for `init`, the solver's integrator (`core`, a `Dynamic{CoreIntegrator{U, T}}`, so its type has no axis for the
+  algorithm) and the problem as given, for `solve!`'s solution.
 """
 mutable struct ParamIntegrator{U,T,P}
     u::U
@@ -416,33 +599,46 @@ mutable struct ParamIntegrator{U,T,P}
     u_modified::Bool
     terminated::Bool
     sv::Union{Nothing,Dynamic{StepView{U,T}}}
-    const sys::Union{Nothing,Dynamic{IndexProvider}}   # the problem's names (move 4), or none
+    const sys::Any                                       # the problem's system object, or nothing
+    const names::Union{Nothing,Dynamic{IndexProvider}}   # its names (move 4), or none
+    const pt::Vector{Float64}                            # the parameters saved: times
+    const pu::Vector{P}                                  # and values
+    core::Union{Nothing,Dynamic{CoreIntegrator{U,T}}}   # the solver's integrator (`init`), or nothing (`solve`)
+    prob::Any                                            # the problem as given (`init`), or nothing
 end
 add_tstop!(i::ParamIntegrator{U,T}, τ::T) where {U,T} = (step_tstop!(i.sv::Dynamic{StepView{U,T}}, τ); nothing)
 terminate!(i::ParamIntegrator) = (i.terminated = true; nothing)
 interp!(i::ParamIntegrator{U,T}, out::U, τ::T) where {U,T} = (step_interp!(i.sv::Dynamic{StepView{U,T}}, out, τ); nothing)
+auto_dt_reset!(i::ParamIntegrator{U,T}) where {U,T} = (step_dt_reset!(i.sv::Dynamic{StepView{U,T}}); nothing)
+save_discretes!(i::ParamIntegrator) = (push!(i.pt, i.t); push!(i.pu, _saved(i.p)); nothing)
+"A copy of the parameters to save: the solve goes on changing the integrator's."
+_saved(p::AbstractArray) = copy(p)
+_saved(p) = deepcopy(p)
 @implement HasProperty{:ps, ParameterView{P}} ParamIntegrator{U,T,P} where {U,T,P} begin
-    property(i, ::Val{:ps}) = ParameterView(getfield(i, :p), getfield(i, :sys))
+    property(i, ::Val{:ps}) = ParameterView(getfield(i, :p), getfield(i, :names))
 end
 @implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
 # the integrator a callback sees, by name: `getstate(integ, :x)`, `getparam(integ, :σ)` (SciML's `integ[:x]`,
 # `integ.ps[:σ]`), through the traits the integrator conforms to (traits §6.5)
 @implement IndexProvider ParamIntegrator{U,T,P} where {U,T,P} begin
-    variable_index(i, sym) = (sys = getfield(i, :sys); sys === nothing ? nothing : variable_index(sys, sym))
-    parameter_index(i, sym) = (sys = getfield(i, :sys); sys === nothing ? nothing : parameter_index(sys, sym))
+    variable_index(i, sym) = (sys = getfield(i, :names); sys === nothing ? nothing : variable_index(sys, sym))
+    parameter_index(i, sym) = (sys = getfield(i, :names); sys === nothing ? nothing : parameter_index(sys, sym))
 end
 @implement ValueProvider{U,P} ParamIntegrator{U,T,P} where {U,T,P} begin
     state_values(i) = getfield(i, :u)
     parameter_values(i) = getfield(i, :p)
 end
+@implement HasSystem ParamIntegrator{U,T,P} where {U,T,P} begin
+    system(i) = getfield(i, :sys)
+end
 
-function _sync_in!(pi::ParamIntegrator{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T}
+function _sync_in!(pi::ParamIntegrator{U,T}, sv::StepView{U,T}) where {U,T}
     pi.sv = sv
     pi.u = sv.u; pi.t = sv.t; pi.dt = sv.dt
     pi.u_modified = sv.u_modified; pi.terminated = sv.terminated
     return nothing
 end
-_sync_out!(pi::ParamIntegrator{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
+_sync_out!(pi::ParamIntegrator{U,T}, sv::StepView{U,T}) where {U,T} =
     (sv.u_modified = pi.u_modified; sv.terminated = pi.terminated; nothing)
 
 "A user's discrete callback, kept at the problem's types, adapted to the solver core (W-63): the outer layer's, compiled per parameter type."
@@ -455,6 +651,8 @@ step_condition(c::ParamCallback{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) wh
     (_sync_in!(c.pi, sv); condition(c.cb, u, t, c.view))
 step_affect!(c::ParamCallback{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
     (_sync_in!(c.pi, sv); affect!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+step_initialize!(c::ParamCallback{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); initialize!(c.cb, u, t, c.view); _sync_out!(c.pi, sv); nothing)
 @implement StepCallback{U,T} ParamCallback{U,T,P} where {U,T,P}
 
 "A user's continuous callback, adapted to the solver core."
@@ -467,19 +665,31 @@ step_event_condition(c::ParamEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}})
     (_sync_in!(c.pi, sv); event_condition(c.cb, u, t, c.view))
 step_event_affect!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
     (_sync_in!(c.pi, sv); event_affect!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+step_event_affect_neg!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); event_affect_neg!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+step_event_initialize!(c::ParamEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); event_initialize!(c.cb, u, t, c.view); _sync_out!(c.pi, sv); nothing)
 @implement StepEvent{U,T} ParamEvent{U,T,P} where {U,T,P}
+
+"The outer layer's integrator for a problem's types: its parameters (saved at `t0` when callbacks may change them), system and names."
+function param_integrator(::Type{U}, p::P, t0::Float64, sys, names, save::Bool) where {U,P}
+    pi = ParamIntegrator{U,Float64,P}(U(), t0, 0.0, p, false, false, nothing, sys, names, Float64[], P[], nothing, nothing)
+    save && save_discretes!(pi)
+    return pi
+end
 
 """
     adapt_callbacks(cbs, U, p) -> Vector{Any}
+    adapt_callbacks!(pi, cbs) -> Vector{Any}
 
 The outer layer's step for callbacks (W-63): the user's callbacks entered at the problem's types
 `(U, Float64, P)` (`enter_callbacks`), each adapted to the solver core, which sees them as
-`StepCallback{U, Float64}` and `StepEvent{U, Float64}`, without the parameters.
+`StepCallback{U, Float64}` and `StepEvent{U, Float64}`, without the parameters. They share the integrator `pi`.
 """
-function adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P, sys = nothing) where {U,P}
-    T = Float64
+adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P) where {U,P} =
+    adapt_callbacks!(param_integrator(U, p, 0.0, nothing, nothing, false), cbs)
+function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::Vector{Any}) where {U,T,P}
     d, c = enter_callbacks(cbs, U, P)
-    pi = ParamIntegrator{U,T,P}(U(), 0.0, 0.0, p, false, false, nothing, sys)
     view = Dynamic{IntegratorView{U,T,P}}(pi)
     out = Any[]
     for k in d; push!(out, ParamCallback{U,T,P}(k, pi, view)); end
@@ -508,6 +718,13 @@ _enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEve
 _enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::(StepEvent{U,T}, StepCallback{U,T})) where {U,T} =
     (push!(c, Kept{StepEvent{U,T}}(cb)); nothing)
 
+"The callbacks' `initialize` at a solver's `init`, at the initial state (SciML's `initialize_callbacks!`): the continuous ones, then the discrete ones."
+function initialize_step_callbacks!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, u::U, t::T, sv::StepView{U,T}) where {U,T}
+    for cb in c; step_event_initialize!(cb, u, t, sv); end
+    for cb in d; step_initialize!(cb, u, t, sv); end
+    return nothing
+end
+
 # --- options, solution, the integrator ---------------------------------------------------------
 
 struct Tsit5 end
@@ -518,21 +735,11 @@ struct SolverOptions
     dtmax::Float64
     maxiters::Int
     saveat::Vector{Float64}          # empty: save every step
+    tstops::Vector{Float64}          # times the solver must step to (SciML's `tstops`)
 end
-
-"""
-What a solver returns (the core's solution, W-63): the saved times and states, the return code and the
-counts. It has no problem: the core never sees the parameters. `solve_ode` makes the user's `ODESolution`
-from it.
-"""
-struct CoreSolution{T}
-    t::Vector{Float64}
-    u::Vector{Vector{T}}
-    retcode::Symbol
-    naccept::Int
-    nreject::Int
-    nf::Int
-end
+SolverOptions(abstol, reltol, dtmax, maxiters, saveat) = SolverOptions(abstol, reltol, dtmax, maxiters, saveat, Float64[])
+"The front end's defaults (`solve`'s keywords)."
+const DEFAULT_OPTIONS = SolverOptions(1e-6, 1e-3, Inf, 100_000, Float64[], Float64[])
 
 """
     ODESolution{T, P}
@@ -551,7 +758,10 @@ struct ODESolution{T,P}
     nreject::Int
     nf::Int
     prob::Kept{ODEProblemTrait{T,P}}            # the problem, kept: no axis for its function or its type
-    sys::Union{Nothing,Dynamic{IndexProvider}}   # the problem's names, or none
+    sys::Any                                     # the problem's system object, or nothing
+    names::Union{Nothing,Dynamic{IndexProvider}} # its names, or none
+    pt::Vector{Float64}                          # the parameters saved by callbacks (`save_discretes!`): times,
+    pu::Vector{P}                                # and values; empty when no callback could change them
 end
 
 # the solution as a trajectory (move 5): `Trajectory` is TraitArrayTools', RecursiveArrayTools' stand-in,
@@ -566,8 +776,23 @@ end
 # --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
 # the operations on the kept names themselves
 @implement IndexProvider ODESolution{T,P} where {T,P} begin
-    variable_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : variable_index(sys, sym))
-    parameter_index(s, sym) = (sys = getfield(s, :sys); sys === nothing ? nothing : parameter_index(sys, sym))
+    variable_index(s, sym) = (sys = getfield(s, :names); sys === nothing ? nothing : variable_index(sys, sym))
+    parameter_index(s, sym) = (sys = getfield(s, :names); sys === nothing ? nothing : parameter_index(sys, sym))
+end
+@implement HasSystem ODESolution{T,P} where {T,P} begin
+    system(s) = getfield(s, :sys)
+end
+"""
+    parameters_at(sol, τ)
+
+The parameters in force at `τ`: the last values saved at or before `τ` (`save_discretes!` in a callback; the
+problem's at the start), or the problem's parameters where no callback could change them.
+"""
+function parameters_at(s::ODESolution{T,P}, τ::Real) where {T,P}
+    pt = getfield(s, :pt)
+    isempty(pt) && return getfield(s, :prob).p
+    k = searchsortedlast(pt, Float64(τ))
+    return getfield(s, :pu)[max(k, 1)]
 end
 # a solution's values: its final state, and its problem's parameters
 @implement ValueProvider{Vector{T},P} ODESolution{T,P} where {T,P} begin
@@ -589,20 +814,36 @@ Base.getindex(v::ParamView, sym::Symbol) = getparam(v.s, sym)
 # the sugar, by the owner of the type (move 4: for scripts; trait code reads `getseries`, `getparam`)
 Base.getindex(s::ODESolution, sym::Symbol) = getseries(s, sym)
 Base.getproperty(s::ODESolution, name::Symbol) = name === :ps ? ParamView(s) : getfield(s, name)
-"The problem's names, for its solution: `ODEProblem`'s `sys`; none for a problem type of the user's."
-problem_sys(@nospecialize(prob)) = nothing
-problem_sys(prob::ODEProblem) = prob.sys
-"The solver's solution given its problem and names (the outer layer, W-63)."
-with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys) where {T,P} =
-    ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys)
+"The solver's solution given its problem, its system, names and saved parameters (the outer layer, W-63)."
+with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys, names, pt::Vector{Float64}, pu::Vector{P}) where {T,P} =
+    ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys, names, pt, pu)
 
 """
 An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
 algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on the core's problem `m`
-(its parameters partially evaluated, W-63), with the core's step callbacks.
+(its parameters partially evaluated, W-63), with the core's step callbacks. `takes_mass_matrix(a)`: whether
+it solves `M du/dt = f` for a mass matrix `M` other than the identity (default: no; `solve` and `init`
+refuse such a problem for it).
 """
 @trait ODEAlgorithm begin
     solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::CoreSolution
+    takes_mass_matrix(a::ODEAlgorithm)::Bool = false
+end
+
+"""
+A solver whose integrator user code can step (SciML's `init`, `step!`, `solve!`): `init_core(a, m, callbacks,
+opts)` returns its integrator at the start of the span, a `CoreIntegrator{U, Float64}` and `StepView{U, Float64}`
+for the state type `U`. A capability of the algorithm's type: `init` takes only these.
+"""
+@trait ODEStepper <: ODEAlgorithm begin
+    init_core(a::ODEStepper, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::Any
+end
+
+"Run a solver's integrator to the end of its span (the solvers' `solve_core` by steps)."
+function run_to_end!(i)
+    while advance!(i)
+    end
+    return core_solution(i)
 end
 
 """
@@ -691,11 +932,13 @@ end
 end
 
 """
-Tsit5's state between steps. Its type holds the element type, nothing else: the parameters stay in
-the outer layer (W-63), and the callbacks are kept with their attributes (`Vector{StepCallback{…}}`),
-so their types do not reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
+Tsit5's state between steps, with its problem and the driver's state (SciML's integrator keeps both). Its type
+holds the element type and the core's problem type, nothing else: the parameters stay in the outer layer
+(W-63), and the callbacks are kept with their attributes (`Vector{StepCallback{…}}`), so their types do not
+reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
 """
-mutable struct Tsit5Integrator{T}
+mutable struct Tsit5Integrator{T,M}
+    const m::M
     const u::Vector{T}
     const uprev::Vector{T}
     t::Float64
@@ -722,13 +965,31 @@ mutable struct Tsit5Integrator{T}
     const callbacks::Vector{StepCallback{Vector{T},Float64}}
     const events::Vector{StepEvent{Vector{T},Float64}}
     const evprev::Vector{Float64}
+    # the driver's state between steps
+    iv::Union{Nothing,Dynamic{StepView{Vector{T},Float64}}}   # the integrator as its callbacks see it
+    const opts::SolverOptions
+    const tf::Float64
+    dtnext::Float64                  # the step to try next
+    const ts::Vector{Float64}        # the saved times and states
+    const us::Vector{Vector{T}}
+    isave::Int                       # the next of `opts.saveat`
+    iters::Int
+    retcode::Symbol                  # :Default while it runs; :MaxIters
+    dt_reset::Bool                   # `auto_dt_reset!`: the next step's size estimated again
 end
 step_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
 step_terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
 "The state at `τ` within the last accepted step, by the cubic Hermite interpolant (as for `saveat`)."
 step_interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
     (hermite!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, i.kprev, i.unew, i.k7); nothing)
-@implement StepView Tsit5Integrator{T} where {T}
+step_dt_reset!(i::Tsit5Integrator) = (i.dt_reset = true; nothing)
+@implement StepView Tsit5Integrator{T,M} where {T,M}
+@implement CoreIntegrator{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M} begin
+    advance!(i) = tsit5_advance!(i)
+    core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf)
+end
+"A driver's return code: `:Terminated`, `:MaxIters`, `:Success` at the span's end, `:Default` while it runs."
+_retcode(i) = i.terminated ? :Terminated : i.retcode !== :Default ? i.retcode : i.t >= i.tf ? :Success : :Default
 
 "Insert `τ` into the sorted times the solver must step to; a time not ahead of `t` is ignored."
 function _add_tstop!(tstops::Vector{Float64}, t::Float64, τ::Float64)
@@ -813,18 +1074,111 @@ end
 # --- the driver ---------------------------------------------------------------------------------
 
 """
+    check_properties(prob, alg)
+
+The front end's check of a problem's optional properties against the algorithm (open issue 119): a mass
+matrix other than the identity (`HasMassMatrix`, of the problem or of its function) is refused unless the
+algorithm takes one (`takes_mass_matrix`); solving the problem as an ODE would ignore it. A Jacobian
+prototype is a hint, not checked: a solver that does not use one computes the same Jacobian dense.
+"""
+Base.@nospecializeinfer function check_properties(@nospecialize(prob), alg::ODEAlgorithm)
+    M = _mass_matrix(prob)
+    _is_identity(M) || takes_mass_matrix(alg) || throw(ArgumentError(string(
+        "the algorithm takes no mass matrix, and this problem has one other than the identity (",
+        summary(M), ", from its function's or its own `HasMassMatrix`): a DAE, which solving as an ODE would ",
+        "get wrong. Use an algorithm that takes mass matrices (`takes_mass_matrix`).")))
+    return nothing
+end
+"The callbacks of a solve: the problem's (`HasCallbacks`), then the ones given (SciML's `CallbackSet(prob.callback, callback)`)."
+Base.@nospecializeinfer function _all_callbacks(@nospecialize(prob), callbacks::Vector{Any})
+    pc = _problem_callbacks(prob)
+    return isempty(pc) ? callbacks : Any[pc..., callbacks...]
+end
+_no_saved(p::P) where {P} = P[]
+
+"""
     solve_ode(prob, alg, callbacks, opts) -> ODESolution
 
 Solve a problem of any type that implements `ODEProblemTrait`, the outer layer (W-63): the problem's
-functions partially evaluated on its parameters (`core_problem`), the user's callbacks (`DiscreteCallback`,
-`ContinuousCallback`, values of callback types) entered at the problem's types and adapted to the core
-(`adapt_callbacks`), then the algorithm's driver (`solve_core`), which never sees the parameters' type. What
-depends on the parameters' type is this function and the adapters: a few constructors and closures.
+properties checked against the algorithm (`check_properties`), its functions partially evaluated on its
+parameters (`core_problem`), its callbacks and the user's (`DiscreteCallback`, `ContinuousCallback`, values
+of callback types) entered at the problem's types and adapted to the core (`adapt_callbacks!`), then the
+algorithm's driver (`solve_core`), which never sees the parameters' type. What depends on the parameters'
+type is this function and the adapters: a few constructors and closures. With callbacks, the parameters are
+saved at the start and wherever a callback calls `save_discretes!`.
 """
 Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
+    check_properties(prob, alg)
     m = core_problem(prob)
-    cbs = isempty(callbacks) ? callbacks : adapt_callbacks(callbacks, typeof(prob.u0), prob.p, problem_sys(prob))
-    return with_problem(solve_core(alg, m, cbs, opts), prob, problem_sys(prob))
+    cbs = _all_callbacks(prob, callbacks)
+    sys = _system(prob)
+    names = _names(sys)
+    isempty(cbs) && return with_problem(solve_core(alg, m, cbs, opts), prob, sys, names, Float64[], _no_saved(prob.p))
+    pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, names, true)
+    return with_problem(solve_core(alg, m, adapt_callbacks!(pi, cbs), opts), prob, sys, names, pi.pt, pi.pu)
+end
+
+"""
+    init_ode(prob, alg, callbacks, opts) -> ParamIntegrator
+
+SciML's `init`: as `solve_ode`, but the solver's integrator at the start of the span (`init_core`, an
+`ODEStepper`'s) is returned in the outer layer's integrator, for `step!` and `solve!`. The integrator's type
+is `ParamIntegrator{Vector{T}, Float64, P}`, whatever the algorithm, the function and the callbacks.
+"""
+Base.@nospecializeinfer function init_ode(@nospecialize(prob), alg::ODEStepper, callbacks::Vector{Any}, opts::SolverOptions)
+    check_properties(prob, alg)
+    m = core_problem(prob)
+    cbs = _all_callbacks(prob, callbacks)
+    sys = _system(prob)
+    pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, _names(sys), true)
+    core = init_core(alg, m, isempty(cbs) ? cbs : adapt_callbacks!(pi, cbs), opts)
+    return attach!(pi, core, prob)
+end
+"The solver's integrator and the problem, in the outer layer's integrator."
+function attach!(pi::ParamIntegrator{U,T,P}, @nospecialize(core), @nospecialize(prob)) where {U,T,P}
+    pi.core = Dynamic{CoreIntegrator{U,T}}(core)
+    pi.prob = prob
+    _sync_in!(pi, Dynamic{StepView{U,T}}(core))
+    return pi
+end
+
+"""
+    step!(integ)
+    step!(integ, dt, stop_at_tdt = false)
+
+SciML's `step!` on an integrator from `init`: one accepted step, with its events, saves and callbacks; or
+steps until `integ.t` reaches `integ.t + dt`, exactly when `stop_at_tdt` (a time to stop at). At the end of
+the span, or once terminated, it does nothing.
+"""
+step!(i::ParamIntegrator) = (_advance!(i); nothing)
+function step!(i::ParamIntegrator{U,T}, dt::Real, stop_at_tdt::Bool = false) where {U,T}
+    dt > 0 || throw(ArgumentError("step!: dt must be positive, got $dt"))
+    τ = i.t + T(dt)
+    stop_at_tdt && add_tstop!(i, τ)
+    while i.t < τ && _advance!(i)
+    end
+    return nothing
+end
+function _advance!(i::ParamIntegrator{U,T}) where {U,T}
+    core = i.core
+    core === nothing && throw(ArgumentError("step!: an integrator made by `init`"))
+    sv = i.sv::Dynamic{StepView{U,T}}
+    _sync_out!(i, sv)                      # the flags the user set (`u_modified`, `terminated`)
+    ok = advance!(core::Dynamic{CoreIntegrator{U,T}})
+    _sync_in!(i, sv)
+    return ok
+end
+"""
+    solve!(integ) -> ODESolution
+
+SciML's `solve!`: steps the integrator from `init` to the end of its span (or until terminated) and returns
+the solution, saved from the start.
+"""
+function solve!(i::ParamIntegrator{U,T}) where {U,T}
+    while _advance!(i)
+    end
+    core = i.core::Dynamic{CoreIntegrator{U,T}}
+    return with_problem(core_solution(core), i.prob, i.sys, i.names, i.pt, i.pu)
 end
 
 #     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> CoreSolution
@@ -833,34 +1187,54 @@ end
 # `callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
 # type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the solve; the
 # step-size control reads primal values, so a gradient follows the primal solve's steps. Callbacks take
-# `Float64` states.
+# `Float64` states. The driver is its integrator's `advance!`, one accepted step at a time: `solve` runs it
+# to the end, `init` returns it.
 @implement ODEAlgorithm Tsit5 begin
-    solve_core(a, m, callbacks, opts) = tsit5_solve(m, m.u0, m.tspan, callbacks, opts)
+    solve_core(a, m, callbacks, opts) = run_to_end!(tsit5_init(m, m.u0, m.tspan, callbacks, opts))
 end
-
-"Tsit5 for the core's problem `m`, at its state's element type `T`."
-function tsit5_solve(m, u0::Vector{T}, tspan::Tuple{Float64,Float64},
-                     callbacks::Vector{Any}, opts::SolverOptions) where {T}
-    i = tsit5_init(m, u0, tspan, callbacks)
-    return tsit5_run!(m, i, tspan[2], opts)
+@implement ODEStepper Tsit5 begin
+    init_core(a, m, callbacks, opts) = tsit5_init(m, m.u0, m.tspan, callbacks, opts)
 end
 
 """
-Tsit5's `init`: the integrator at `T`, the core's callbacks kept (`enter_step_callbacks`), and
-`f(u0, t0)`. Its type is `Tsit5Integrator{T}` whatever the callbacks and the parameters.
+Tsit5's `init`: the integrator at `T` with its problem, the core's callbacks kept (`enter_step_callbacks`), the
+times to stop at, the callbacks' `initialize`, `f(u0, t0)`, the first step's size, the first save and the
+continuous callbacks' conditions at the start. Its type is `Tsit5Integrator{T, M}` whatever the callbacks and the
+parameters.
 """
-function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any}) where {T}
-    t0 = tspan[1]
+function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any},
+                    opts::SolverOptions = DEFAULT_OPTIONS) where {T}
+    t0, tf = tspan
     n = length(u0)
     T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
     d, c = enter_step_callbacks(callbacks, Vector{T})
     z() = zeros(T, n)
-    i = Tsit5Integrator{T}(copy(u0), copy(u0), t0, 0.0, false, false,
-                           z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
-                           t0, z(), Float64[], d, c, zeros(Float64, length(c)))
+    i = Tsit5Integrator{T,typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false,
+                                     z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
+                                     t0, z(), Float64[], d, c, zeros(Float64, length(c)),
+                                     nothing, opts, tf, 0.0, Float64[], Vector{T}[], 1, 0, :Default, false)
+    iv = Dynamic{StepView{Vector{T},Float64}}(i)
+    i.iv = iv
+    for τ in opts.tstops
+        _add_tstop!(i.tstops, t0, τ)
+    end
+    isempty(callbacks) || initialize_step_callbacks!(i.callbacks, i.events, i.u, i.t, iv)
+    i.u_modified = false
     core_rhs!(m, i.k1, i.u, t0)
     i.nf += 1
+    i.dtnext = initdt(m, i, 1.0, opts)
+    _save_start!(i.ts, i.us, i.u, t0, opts.saveat) && (i.isave = 2)
+    for k in eachindex(i.events)
+        i.evprev[k] = step_event_condition(i.events[k], i.u, i.t, iv)
+    end
     return i
+end
+"The first save: the state at `t0`, unless `saveat` starts later; `true` when `saveat`'s first time is `t0`."
+function _save_start!(ts::Vector{Float64}, us::Vector{Vector{T}}, u::Vector{T}, t0::Float64, saveat::Vector{Float64}) where {T}
+    if isempty(saveat) || saveat[1] == t0
+        push!(ts, t0); push!(us, copy(u))
+    end
+    return !isempty(saveat) && saveat[1] == t0
 end
 
 """
@@ -883,33 +1257,69 @@ function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
     return tl
 end
 
-"Tsit5's driver: steps the integrator `i` to `tf` (or until a callback terminates it)."
-function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) where {T}
-    t0 = i.t
-    n = length(i.u)
-    dt = initdt(m, i, 1.0, opts)
-    iv = Dynamic{StepView{Vector{T},Float64}}(i)
-    ts = Float64[t0]
-    us = Vector{T}[copy(i.u)]
-    saveat = opts.saveat
-    isave = 1
-    if !isempty(saveat) && saveat[1] == t0
-        isave = 2
-    elseif !isempty(saveat)
-        empty!(ts); empty!(us)
-    end
-    events = i.events
+"""
+The continuous callbacks' events within the step just accepted (`[tprev, t]`): each condition's sign change,
+located by bisection on the interpolant (`event_time`); the integrator is moved to the earliest. Returns the
+event's callback (`0`: none) and whether its condition rose through zero. A callback's condition just after
+its own event (`NaN` in `evprev`) is read a little into the step (SciML's repeat nudge). Shared by the solvers.
+"""
+function locate_events!(events::Vector{Kept{StepEvent{Vector{Float64},Float64}}}, evprev::Vector{Float64},
+                        iv::StepView{Vector{Float64},Float64}, u::Vector{Float64}, utilde::Vector{Float64},
+                        tprev::Float64, t::Float64, dt::Float64)
+    ke, te, up = 0, t, false
     for k in eachindex(events)
-        i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
+        g = step_event_condition(events[k], u, t, iv)
+        g0 = evprev[k]
+        tl = tprev
+        if isnan(g0)                         # the step after this callback's event: its value a
+            tl = tprev + dt / 100            # little into the step (SciML's repeat nudge)
+            step_interp!(iv, utilde, tl)
+            g0 = step_event_condition(events[k], utilde, tl, iv)
+        end
+        if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
+            tk = event_time(events[k], iv, utilde, tl, t, g0)
+            if ke == 0 || tk < te
+                ke, te, up = k, tk, g0 < 0
+            end
+        end
+        evprev[k] = g
     end
+    return ke, te, up
+end
+
+"The event's affect: `step_event_affect!` where the condition rose, `step_event_affect_neg!` where it fell."
+event_affect_dir!(cb, iv, up::Bool) = up ? step_event_affect!(cb, iv) : step_event_affect_neg!(cb, iv)
+
+"""
+Tsit5's `advance!`: one accepted step (rejected attempts within it), its continuous callbacks' events, the saves,
+then the discrete callbacks; `false` when it cannot step (the span's end, terminated, `maxiters`). A state the
+user changed between steps (`u_modified`) and `auto_dt_reset!` are taken first.
+"""
+function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
+    m, opts, tf = i.m, i.opts, i.tf
+    iv = i.iv::Dynamic{StepView{Vector{T},Float64}}
+    events = i.events
+    if i.u_modified                                  # changed between steps: f(u, t) and the conditions again
+        core_rhs!(m, i.k1, i.u, i.t)
+        i.nf += 1
+        for k in eachindex(events)
+            i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
+        end
+        i.u_modified = false
+    end
+    if i.dt_reset                                    # `auto_dt_reset!`: the step's size from the state
+        i.dtnext = initdt(m, i, 1.0, opts)
+        i.dt_reset = false
+    end
+    n = length(i.u)
+    saveat = opts.saveat
+    dt = i.dtnext
     # PI controller, OrdinaryDiffEq's defaults for a 5th-order method
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
-    retcode = :Success
-    iters = 0
     while i.t < tf && !i.terminated
-        iters += 1
-        if iters > opts.maxiters
-            retcode = :MaxIters
+        i.iters += 1
+        if i.iters > opts.maxiters
+            i.retcode = :MaxIters
             break
         end
         dt = min(dt, tf - i.t)
@@ -931,26 +1341,9 @@ function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) 
             i.t = tnew
             i.dt = dt
             i.naccept += 1
-            ke = 0
+            ke, up = 0, false
             if T === Float64 && !isempty(events)
-                te = i.t
-                for k in eachindex(events)
-                    g = step_event_condition(events[k], i.u, i.t, iv)
-                    g0 = i.evprev[k]
-                    tl = i.tprev
-                    if isnan(g0)                         # the step after this callback's event: its value a
-                        tl = i.tprev + i.dt / 100        # little into the step (SciML's repeat nudge)
-                        step_interp!(iv, i.utilde, tl)
-                        g0 = step_event_condition(events[k], i.utilde, tl, iv)
-                    end
-                    if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
-                        tk = event_time(events[k], iv, i.utilde, tl, i.t, g0)
-                        if ke == 0 || tk < te
-                            ke, te = k, tk
-                        end
-                    end
-                    i.evprev[k] = g
-                end
+                ke, te, up = locate_events!(events, i.evprev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
                 if ke != 0                                   # the integrator moves to the earliest event
                     step_interp!(iv, i.utilde, te)
                     copyto!(i.u, i.utilde)
@@ -959,18 +1352,18 @@ function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) 
             end
             tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
             if isempty(saveat)
-                push!(ts, i.t); push!(us, copy(i.u))
+                push!(i.ts, i.t); push!(i.us, copy(i.u))
             else
-                while isave <= length(saveat) && saveat[isave] <= i.t
-                    θ = (saveat[isave] - i.tprev) / dt
-                    push!(ts, saveat[isave])
-                    push!(us, hermite!(zeros(T, n), θ, dt, i.uprev, i.kprev, i.unew, i.k7))
-                    isave += 1
+                while i.isave <= length(saveat) && saveat[i.isave] <= i.t
+                    θ = (saveat[i.isave] - i.tprev) / dt
+                    push!(i.ts, saveat[i.isave])
+                    push!(i.us, hermite!(zeros(T, n), θ, dt, i.uprev, i.kprev, i.unew, i.k7))
+                    i.isave += 1
                 end
             end
             if ke != 0
                 i.u_modified = true
-                step_event_affect!(events[ke], iv)
+                event_affect_dir!(events[ke], iv, up)
                 core_rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
                 i.nf += 1
                 i.u_modified = false
@@ -993,13 +1386,15 @@ function tsit5_run!(m, i::Tsit5Integrator{T}, tf::Float64, opts::SolverOptions) 
             q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
             dt = min(dt / q, opts.dtmax)
             i.qold = max(EEst, 1e-4)
+            i.dtnext = dt
+            return true
         else
             i.nreject += 1
             dt = dt / min(1 / qmin, q11 / gamma)
         end
     end
-    i.terminated && (retcode = :Terminated)
-    return CoreSolution{T}(ts, us, retcode, i.naccept, i.nreject, i.nf)
+    i.dtnext = dt
+    return false
 end
 
 

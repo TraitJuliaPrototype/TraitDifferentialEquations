@@ -49,7 +49,12 @@ TraitDifferentialEquations.condition(cb::OnlyCondition, u::Vector{Float64}, t::F
     # Rodas5 with the view's operations
     sr = solve(ODEProblem(osc!, [1.0, 0.0], (0.0, 5.0), OscP(4.0, 0.1)), Rodas5(); callback = (stop,))
     @test sr.retcode === :Terminated
-    @test_throws ArgumentError solve(ODEProblem(osc!, [1.0, 0.0], (0.0, 1.0), OscP(4.0, 0.1)), Rodas5(); callback = ground)
+    # Rodas5 with a continuous callback (census item 1): the same first contact
+    hitsr = Float64[]
+    groundr = ContinuousCallback((u, t, i) -> u[1], i -> (push!(hitsr, i.t); i.u[2] = -0.9 * i.u[2]; nothing))
+    sbr = solve(ODEProblem(ball!, [1.0, 0.0], (0.0, 3.0)), Rodas5(); callback = groundr, abstol = 1e-10, reltol = 1e-10, saveat = 0:0.01:3)
+    @test isapprox(hitsr[1], sqrt(2 / 9.81); atol = 1e-8) && length(hitsr) == length(hits) && isapprox(hitsr, hits; atol = 1e-6)
+    @test minimum(u[1] for u in sbr.u) >= -1e-9
     # a callback type without affect! is refused at @implement
     e = try
         Core.eval(@__MODULE__, :(@implement Callback{Vector{Float64}, Float64, Vector{Float64}} OnlyCondition)); nothing

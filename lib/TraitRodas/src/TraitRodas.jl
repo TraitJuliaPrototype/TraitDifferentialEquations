@@ -10,11 +10,11 @@ using TraitWorld
 using ODECore
 # the solver API: the core's problem and its calls, the dual numbers the core keys its problems' functions
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
-using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, StepView, ODEAlgorithm,
-               core_rhs!, core_jacobian!, enter_step_callbacks, _add_tstop!, event_time, step_event_condition,
-               step_condition, step_affect!, step_event_affect!,
-               LinearSolver, linfactor, DenseLU
-import ODECore: solve_core, step_tstop!, step_terminate!, step_interp!
+using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, StepView, ODEAlgorithm, ODEStepper,
+               CoreIntegrator, core_rhs!, core_jacobian!, enter_step_callbacks, initialize_step_callbacks!, _add_tstop!,
+               step_event_condition, step_condition, step_affect!, locate_events!, event_affect_dir!,
+               _save_start!, _retcode, run_to_end!, LinearSolver, linfactor, DenseLU
+import ODECore: solve_core, init_core, advance!, core_solution, step_tstop!, step_terminate!, step_interp!, step_dt_reset!
 import ForwardDiff
 export Rodas5
 @trait_module begin
