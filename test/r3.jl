@@ -1,12 +1,6 @@
 # W-32 R3 (E-242): `remake`, dense output (open issue 117), the solution's `idxs` forms.
 # Runs inside runtests.jl (which defines lorenz!, U0, P0, REF, caught).
 
-"An index type of a library's own, with its own method on the solution (as NetworkDynamics' `VIndex`)."
-struct TenTimes
-    i::Int
-end
-(s::TraitDifferentialEquations.ODESolution)(τ::Real, x::TenTimes) = 10 * s(τ, x.i)
-
 @testset "R3: remake (S7)" begin
     p = [10.0, 28.0, 8 / 3]
     prob = ODEProblem(lorenz!, U0, (0.0, 1.0), p)
@@ -80,8 +74,7 @@ end
     a = s([0.25, 0.5])
     @test a.t == [0.25, 0.5] && a.u[2] == u
     @test s([0.25, 0.5]; idxs = :y) == [s(0.25)[2], u[2]]
-    # an index type of another library's, by its own method
-    @test s(0.5; idxs = TenTimes(1)) == 10 * u[1] && s([0.5]; idxs = [TenTimes(2)]) == [[10 * u[2]]]
+    # an index type of a system's own: test/r118.jl (open issue 118)
     @test caught(() -> s(0.5; idxs = 1.5)) isa ArgumentError
     @test caught(() -> s(0.5; idxs = :w)) isa ArgumentError
 end

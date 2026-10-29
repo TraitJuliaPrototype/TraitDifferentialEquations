@@ -23,7 +23,8 @@ using LinearAlgebra: lu!, I, UniformScaling
 using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
 using TraitArrayTools                # the solution as a trajectory (move 5): RecursiveArrayTools' part
 import TraitArrayTools: times, state, at
-import TraitIndexing: variable_index, parameter_index, state_values, parameter_values
+import TraitIndexing: variable_index, parameter_index, state_values, parameter_values, current_time, system,
+       series_times, series_state, series_parameters, HasSystem, getsystem   # TraitIndexing's (SymbolicIndexingInterface's part)
 import LinearAlgebra
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, CoreSolution, SolverOptions,
@@ -275,19 +276,6 @@ results.
 end
 
 """
-    HasSystem
-
-A value that carries a system object (SciML's `f.sys`, `prob.f.sys`, `sol.prob.f.sys`, `integ.f.sys`;
-SymbolicIndexingInterface's `symbolic_container`): the model's own description, which TDE keeps and gives
-back unchanged (`getsystem`). A problem's function type implements it (a callable model returns itself);
-`ODEFunction`, TDE's problem, its solution and its integrator carry the one their function gave. Where the
-system is an `IndexProvider`, its names serve `sol[:x]` and `getstate`.
-"""
-@trait HasSystem begin
-    system(x::HasSystem)::Any
-end
-
-"""
     HasCallbacks
 
 A problem that keeps callbacks (SciML's `ODEProblem(…; callback)`): `solve` and `init` take them before the
@@ -297,14 +285,6 @@ ones they are given.
     problem_callbacks(x::HasCallbacks)::Vector{Any}
 end
 
-"""
-    getsystem(x)
-
-The system object `x` carries (`HasSystem`: a problem, a solution, an integrator, a callback's view of it, a model),
-or `nothing`.
-"""
-getsystem(x::HasSystem) = system(x)
-getsystem(x) = nothing
 
 # The front end's reads of a function's or a problem's optional properties: the trait's, or the default.
 # - TDE's own records (`ODEProblem`, `ODEFunction`) are read by their fields, and a function (a closure, a generic
@@ -362,9 +342,10 @@ Base.@nospecializeinfer function _problem_callbacks(@nospecialize(x))
 end
 _problem_callbacks_of(x::HasCallbacks) = problem_callbacks(x)
 _problem_callbacks_of(x) = Any[]
-"A system's names, where it provides them (`IndexProvider`), kept `Dynamic`; else `nothing`."
+"A system's names, where it provides them (`IndexProvider{Symbol}`), kept `Dynamic`; else `nothing`."
 Base.@nospecializeinfer _names(@nospecialize(s)) = s === nothing || !_by_bound(s, IndexProvider) ? nothing : _names_of(s)
-_names_of(s::IndexProvider) = Dynamic{IndexProvider}(s)
+# a system of another index type (`IndexProvider{I}`, open issue 118) has no names: its indices serve `getu`
+_names_of(s::IndexProvider{K}) where {K} = K === Symbol ? Dynamic{IndexProvider{Symbol}}(s) : nothing   # (`I` is LinearAlgebra's here)
 _names_of(s) = nothing
 
 # --- the signatures of plain functions --------------------------------------------------------
@@ -467,7 +448,7 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     ad::Bool
     fplain::UserFunction
     sys::Any                                       # the system object, or nothing
-    names::Union{Nothing,Dynamic{IndexProvider}}   # its names (move 4), where it provides them
+    names::Union{Nothing,Dynamic{IndexProvider{Symbol}}}   # its names (move 4), where it provides them
     mass_matrix::Any                               # the identity, or the function's
     jac_prototype::Any                             # nothing, or the function's
     callbacks::Vector{Any}                         # the callbacks it keeps
@@ -675,7 +656,7 @@ mutable struct ParamIntegrator{U,T,P}
     terminated::Bool
     sv::Union{Nothing,Dynamic{StepView{U,T}}}
     const sys::Any                                       # the problem's system object, or nothing
-    const names::Union{Nothing,Dynamic{IndexProvider}}   # its names (move 4), or none
+    const names::Union{Nothing,Dynamic{IndexProvider{Symbol}}}   # its names (move 4), or none
     const pt::Vector{Float64}                            # the parameters saved: times
     const pu::Vector{P}                                  # and values
     core::Union{Nothing,Dynamic{CoreIntegrator{U,T}}}   # the solver's integrator (`init`), or nothing (`solve`)
@@ -695,13 +676,14 @@ end
 @implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
 # the integrator a callback sees, by name: `getstate(integ, :x)`, `getparam(integ, :σ)` (SciML's `integ[:x]`,
 # `integ.ps[:σ]`), through the traits the integrator conforms to (traits §6.5)
-@implement IndexProvider ParamIntegrator{U,T,P} where {U,T,P} begin
+@implement IndexProvider{Symbol} ParamIntegrator{U,T,P} where {U,T,P} begin
     variable_index(i, sym) = (sys = getfield(i, :names); sys === nothing ? nothing : variable_index(sys, sym))
     parameter_index(i, sym) = (sys = getfield(i, :names); sys === nothing ? nothing : parameter_index(sys, sym))
 end
 @implement ValueProvider{U,P} ParamIntegrator{U,T,P} where {U,T,P} begin
     state_values(i) = getfield(i, :u)
     parameter_values(i) = getfield(i, :p)
+    current_time(i) = Float64(getfield(i, :t))
 end
 @implement HasSystem ParamIntegrator{U,T,P} where {U,T,P} begin
     system(i) = getfield(i, :sys)
@@ -838,7 +820,7 @@ struct ODESolution{T,P}
     nf::Int
     prob::Kept{ODEProblemTrait{T,P}}            # the problem, kept: no axis for its function or its type
     sys::Any                                     # the problem's system object, or nothing
-    names::Union{Nothing,Dynamic{IndexProvider}} # its names, or none
+    names::Union{Nothing,Dynamic{IndexProvider{Symbol}}} # its names, or none
     pt::Vector{Float64}                          # the parameters saved by callbacks (`save_discretes!`): times,
     pu::Vector{P}                                # and values; empty when no callback could change them
     interp::Union{Nothing,Kept{Interpolant{Vector{T},Float64}}}   # the solver's dense output, or none
@@ -864,27 +846,32 @@ end
     sol(τs::AbstractVector; idxs = nothing)
 
 The solution at `τ` (`at`), or the values `idxs` select there (SciML's `sol(t; idxs)`): a state's index (`Int`), a
-name (`Symbol`, through the problem's names), or a vector of them. `sol(τ; idxs)` is `sol(τ, idxs)`, a call that
-dispatches on the index's type, so a library that owns an index type gives its own method
-`(sol::ODESolution)(τ::Real, idx::ItsIndex)` (NetworkDynamics' structured indices; a shared protocol for them is
-open issue 118). At several times: a `DiffEqArray` of the states without `idxs`, else the vector of the values.
+name (`Symbol`, through the problem's names), a vector of them, or an index of the system's own type
+(`IndexProvider{I}`, open issue 118: a state variable, a parameter or an observed value, read by `getu` at the
+state at `τ` and the parameters in force there). At several times: a `DiffEqArray` of the states without `idxs`,
+else the vector of the values.
 """
 (s::ODESolution)(τ::Real; idxs = nothing) = idxs === nothing ? at(s, Float64(τ)) : s(τ, idxs)
 (s::ODESolution)(τs::AbstractVector{<:Real}; idxs = nothing) =
-    idxs === nothing ? DiffEqArray([at(s, Float64(τ)) for τ in τs], τs) : [s(τ, idxs) for τ in τs]
+    idxs === nothing ? DiffEqArray([at(s, Float64(τ)) for τ in τs], τs) : _values_at(s, τs, idxs)
 (s::ODESolution)(τ::Real, i::Int) = at(s, Float64(τ))[i]
 function (s::ODESolution)(τ::Real, sym::Symbol)
     i = variable_index(s, sym)
     i === nothing && throw(ArgumentError("no state variable named :$sym"))
     return at(s, Float64(τ))[i]
 end
-(s::ODESolution)(τ::Real, idxs::AbstractVector) = [s(τ, i) for i in idxs]
-(s::ODESolution)(τ::Real, idx) = throw(ArgumentError(string("the solution takes indices of type `Int` or `Symbol`; one of type ",
-    typeof(idx), " needs a method `(sol::ODESolution)(τ::Real, idx::", nameof(typeof(idx)), ")` by the index type's owner")))
+(s::ODESolution)(τ::Real, idxs::AbstractVector) = _plain(idxs) ? [s(τ, i) for i in idxs] : _value_at(getu(s, idxs), s, Float64(τ))
+(s::ODESolution)(τ::Real, idx) = _value_at(getu(s, idx), s, Float64(τ))
+"Whether `idxs` are positions and names only (read without the system's getters)."
+_plain(idx) = idx isa Union{Int,Symbol} || (idx isa AbstractVector && all(i -> i isa Union{Int,Symbol}, idx))
+"The value a getter reads at `τ`: at the state there and the parameters in force there."
+_value_at(g::Getter, s::ODESolution, τ::Float64) = g(at(s, τ), parameters_at(s, τ), τ)
+_values_at(s::ODESolution, τs, idx) = _plain(idx) ? [s(τ, idx) for τ in τs] :
+    (g = getu(s, idx); [_value_at(g, s, Float64(τ)) for τ in τs])   # one getter for every time
 
 # --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
 # the operations on the kept names themselves
-@implement IndexProvider ODESolution{T,P} where {T,P} begin
+@implement IndexProvider{Symbol} ODESolution{T,P} where {T,P} begin
     variable_index(s, sym) = (sys = getfield(s, :names); sys === nothing ? nothing : variable_index(sys, sym))
     parameter_index(s, sym) = (sys = getfield(s, :names); sys === nothing ? nothing : parameter_index(sys, sym))
 end
@@ -907,9 +894,16 @@ end
 @implement ValueProvider{Vector{T},P} ODESolution{T,P} where {T,P} begin
     state_values(s) = last(getfield(s, :u))
     parameter_values(s) = getfield(s, :prob).p
+    current_time(s) = last(getfield(s, :t))
+end
+# a solution's values at its saved times, with the parameters in force at each (`getu(sol, idx)(sol)`, open issue 118)
+@implement SeriesProvider{Vector{T},P} ODESolution{T,P} where {T,P} begin
+    series_times(s) = getfield(s, :t)
+    series_state(s, k) = getfield(s, :u)[k]
+    series_parameters(s, k) = parameters_at(s, getfield(s, :t)[k])
 end
 "The time series of state variable `sym` (SciML's `sol[:x]`): one getter per element type, whatever the names' provider."
-function getseries(s::(Trajectory{U,Float64}, IndexProvider), sym::Symbol) where {U}
+function getseries(s::(Trajectory{U,Float64}, IndexProvider{Symbol}), sym::Symbol) where {U}
     i = variable_index(s, sym)
     i === nothing && throw(ArgumentError("no state variable named :$sym"))
     ts = times(s)

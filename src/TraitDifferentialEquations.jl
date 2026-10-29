@@ -25,7 +25,7 @@ using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, Function
                 no_jacobian, UserFunction, ODEAlgorithm, solve_core, getseries
 export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rodas5, ODEAlgorithm, ODEStepper, solve_core,
        LinearSolver, linfactor, DenseLU,
-       SymbolCache, IndexProvider, ValueProvider, variable_index, parameter_index, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
+       SymbolCache, IndexProvider, ValueProvider, SeriesProvider, variable_index, parameter_index, observed, getu, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!, event_affect_neg!,
        add_tstop!, terminate!, interp!, auto_dt_reset!, save_discretes!, parameters_at, DiffEqArray, plotpoints,
        HasMassMatrix, HasJacobianPrototype, HasSystem, HasCallbacks, getsystem,
