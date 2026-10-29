@@ -58,11 +58,11 @@ callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take the
 Base.@nospecializeinfer function ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing; @nospecialize(callback = nothing))
     u = _promote_state(_state(u0), p)
     ts = (Float64(tspan[1]), Float64(tspan[2]))
-    rf = ODEFunction(f)
-    return _problem(rf.f, rf.jac, u, ts, p, rf.sys, rf.mass_matrix, rf.jac_prototype, _callbacks(callback))
+    cbs = _callbacks(callback)
+    f isa ODEFunction && return _problem(f.f, f.jac, u, ts, p, f.sys, f.mass_matrix, f.jac_prototype, cbs)
+    # a function or a model: its properties as `ODEFunction(f)` reads them, without a record per function type
+    return _problem(f, nothing, u, ts, p, _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
 end
-# a record given: its own fields; a function or a model: its properties as `ODEFunction(f)` reads them
-ODEFunction(f::ODEFunction) = f
 "The callbacks given to a problem, as a vector."
 Base.@nospecializeinfer _callbacks(@nospecialize(cb)) = cb === nothing ? Any[] : cb isa Union{Tuple,AbstractVector} ? Any[c for c in cb] : Any[cb]
 # the functions partially evaluated on the parameters (W-63) at the problem's bounds, which have no parameter

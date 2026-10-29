@@ -253,21 +253,36 @@ or `nothing`.
 getsystem(x::HasSystem) = system(x)
 getsystem(x) = nothing
 
-# The front end's reads of a function's or a problem's optional properties: the trait's, or the default. A kept
-# value (a function kept at `Callable`) is read through its kept trait only: at a bound its held object does not
-# conform to, TraitWorld raises `TraitBoundError` where a plain value reaches the ordinary fallback (traits §5.5,
-# §6.5; a candidate open issue, E-239). Casts (`compiled_for`, `with_dynamic`) are seen through.
+# The front end's reads of a function's or a problem's optional properties: the trait's, or the default.
+# - TDE's own records (`ODEProblem`, `ODEFunction`) are read by their fields, and a function (a closure, a generic
+#   function) that declares none of the traits takes the default without entering a bound: a bound's entry is
+#   compiled per argument type, which would compile the front end again for every new function.
+# - A kept value (a function kept at `Callable`) is read through its kept trait only: at a bound its held object does
+#   not conform to, TraitWorld raises `TraitBoundError` where a plain value reaches the ordinary fallback (traits §5.5,
+#   §6.5; a candidate open issue, E-239). Casts (`compiled_for`, `with_dynamic`) are seen through, at the bound.
 "Whether `x` is a kept value (`Dynamic{X}`, `Compiled{X}`, `Kept{X}`)."
 _iskept(@nospecialize(x)) = x isa Union{Dynamic,Compiled,Kept}
+"Whether the front end reads `x`'s property `X` by the bound: not for a function that does not declare `X`, nor a kept value of another trait."
+_by_bound(@nospecialize(x), @nospecialize(X::Type)) =
+    !((x isa Function || _iskept(x)) && !conforms(typeof(x), X))
 "The system object `x` carries, or `nothing`."
-Base.@nospecializeinfer _system(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasSystem) ? nothing : getsystem(x)
+Base.@nospecializeinfer function _system(@nospecialize(x))
+    x === nothing && return nothing
+    x isa ODEProblem && return getfield(x, :sys)
+    x isa ODEFunction && return getfield(x, :sys)
+    return _by_bound(x, HasSystem) ? getsystem(x) : nothing
+end
 """
 The mass matrix `x` carries (`HasMassMatrix`), or the identity. A callable object (not a function: a closure's
 captured variables are its fields) or a problem with a `mass_matrix` property other than the identity that does
 not declare the trait (SciML's convention reads the property) is refused: solving it as an ODE would ignore the
 mass matrix.
 """
-Base.@nospecializeinfer _mass_matrix(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasMassMatrix) ? I : _mass_matrix_of(x)
+Base.@nospecializeinfer function _mass_matrix(@nospecialize(x))
+    x isa ODEProblem && return getfield(x, :mass_matrix)
+    x isa ODEFunction && return getfield(x, :mass_matrix)
+    return _by_bound(x, HasMassMatrix) ? _mass_matrix_of(x) : I
+end
 _mass_matrix_of(x::HasMassMatrix) = mass_matrix(x)
 Base.@nospecializeinfer function _mass_matrix_of(@nospecialize(x))
     !(x isa Function) && hasproperty(x, :mass_matrix) && !_is_identity(getproperty(x, :mass_matrix)) && throw(ArgumentError(string(
@@ -280,15 +295,22 @@ _is_identity(M::UniformScaling) = M == I
 _is_identity(M::AbstractMatrix) = M == I
 _is_identity(@nospecialize(M)) = false
 "The Jacobian prototype `x` carries (`HasJacobianPrototype`), or `nothing`."
-Base.@nospecializeinfer _jac_prototype(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasJacobianPrototype) ? nothing : _jac_prototype_of(x)
+Base.@nospecializeinfer function _jac_prototype(@nospecialize(x))
+    x isa ODEProblem && return getfield(x, :jac_prototype)
+    x isa ODEFunction && return getfield(x, :jac_prototype)
+    return _by_bound(x, HasJacobianPrototype) ? _jac_prototype_of(x) : nothing
+end
 _jac_prototype_of(x::HasJacobianPrototype) = jac_prototype(x)
 _jac_prototype_of(x) = nothing
 "The callbacks a problem keeps (`HasCallbacks`), or none."
-Base.@nospecializeinfer _problem_callbacks(@nospecialize(x)) = _iskept(x) && !conforms(typeof(x), HasCallbacks) ? Any[] : _problem_callbacks_of(x)
+Base.@nospecializeinfer function _problem_callbacks(@nospecialize(x))
+    x isa ODEProblem && return getfield(x, :callbacks)
+    return _by_bound(x, HasCallbacks) ? _problem_callbacks_of(x) : Any[]
+end
 _problem_callbacks_of(x::HasCallbacks) = problem_callbacks(x)
 _problem_callbacks_of(x) = Any[]
 "A system's names, where it provides them (`IndexProvider`), kept `Dynamic`; else `nothing`."
-Base.@nospecializeinfer _names(@nospecialize(s)) = _iskept(s) && !conforms(typeof(s), IndexProvider) ? nothing : _names_of(s)
+Base.@nospecializeinfer _names(@nospecialize(s)) = s === nothing || !_by_bound(s, IndexProvider) ? nothing : _names_of(s)
 _names_of(s::IndexProvider) = Dynamic{IndexProvider}(s)
 _names_of(s) = nothing
 
