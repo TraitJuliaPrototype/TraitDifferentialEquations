@@ -16,6 +16,9 @@ import ForwardDiff
 import ODECore                       # the core, a package of its own (move 3): `TraitDifferentialEquations.ODECore`
 using ODECore
 using TraitRodas                     # a solver package: `Rodas5`
+import TraitNonlinearSolve           # nonlinear problems and their solvers, an open set (census item 11)
+using TraitNonlinearSolve: NonlinearProblemTrait, residual!, nl_jacobian!, NonlinearProblem, NonlinearFunction, SteadyStateProblem,
+                           NonlinearAlgorithm, NonlinearSolution, NewtonRaphson, TrustRegion, NonlinearPolyalg, successful_retcode
 using TraitIndexing                  # symbolic access (move 4)
 using TraitArrayTools: DiffEqArray, plotpoints   # the solution as a trajectory (move 5)
 using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, init_ode, SolverOptions, FDual,
@@ -25,19 +28,22 @@ export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rod
        SymbolCache, IndexProvider, ValueProvider, variable_index, parameter_index, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!, event_affect_neg!,
        add_tstop!, terminate!, interp!, auto_dt_reset!, save_discretes!, parameters_at, DiffEqArray, plotpoints,
-       HasMassMatrix, HasJacobianPrototype, HasSystem, HasCallbacks, getsystem
+       HasMassMatrix, HasJacobianPrototype, HasSystem, HasCallbacks, getsystem,
+       NonlinearProblemTrait, residual!, nl_jacobian!, NonlinearProblem, NonlinearFunction, SteadyStateProblem,
+       NonlinearAlgorithm, NonlinearSolution, NewtonRaphson, TrustRegion, NonlinearPolyalg, successful_retcode, remake
 
 # the user's callbacks as given (`DiscreteCallback`, `ContinuousCallback`, values of callback types):
 # a solver's `init` enters them at the problem's types
 Base.@nospecializeinfer _cbs(@nospecialize(cb)) = cb === nothing ? Any[] : Any[cb]
 Base.@nospecializeinfer _cbs(@nospecialize(cbs::Union{Tuple,AbstractVector})) = Any[cb for cb in cbs]
 
-_options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[], tstops = Float64[]) =
+_options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[], tstops = Float64[],
+         dense = isempty(saveat)) =
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)),
-                  sort!(Vector{Float64}(collect(tstops))))
+                  sort!(Vector{Float64}(collect(tstops))), Bool(dense))
 
 """
-    solve(prob, Tsit5(); callback = nothing, saveat = [], tstops = [], abstol, reltol, dtmax, maxiters)
+    solve(prob, Tsit5(); callback = nothing, saveat = [], tstops = [], dense = isempty(saveat), abstol, reltol, dtmax, maxiters)
     solve(prob, Rodas5(); …)
 
 Solve a problem of any type that implements `ODEProblemTrait`: TDE's `ODEProblem`, or a problem
@@ -50,11 +56,20 @@ This front end is neither specialized nor inferred on the problem's type, so a c
 not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
 which calls the solver at that type.
 """
-Base.@nospecializeinfer solve(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...) =   # any `ODEAlgorithm` (move 3)
-    _solve(prob, alg, _cbs(callback), _options(; kw...))
+Base.@nospecializeinfer function solve(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...)
+    # a nonlinear algorithm: TraitNonlinearSolve's front end (SciML's one `solve` for every kind of problem)
+    _isnonlinear(alg) && return TraitNonlinearSolve.solve(prob, alg; kw...)
+    return _solve(prob, alg, _cbs(callback), _options(; kw...))          # any `ODEAlgorithm` (move 3)
+end
 _solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
-"The default algorithm (move 3, check 4): the umbrella's own `solve`, Tsit5."
-Base.@nospecializeinfer solve(@nospecialize(prob); kw...) = solve(prob, Tsit5(); kw...)
+"Whether an algorithm is a nonlinear one (`NonlinearAlgorithm`), which the umbrella's `solve` forwards to TraitNonlinearSolve."
+Base.@nospecializeinfer _isnonlinear(@nospecialize(alg)) = conforms(typeof(alg), NonlinearAlgorithm)
+"""
+The default algorithm (move 3, check 4): the umbrella's own `solve`, Tsit5; for a nonlinear problem
+(`NonlinearProblemTrait`), the default polyalgorithm.
+"""
+Base.@nospecializeinfer solve(@nospecialize(prob); kw...) =
+    conforms(typeof(prob), NonlinearProblemTrait) ? TraitNonlinearSolve.solve(prob; kw...) : solve(prob, Tsit5(); kw...)
 
 """
     init(prob, Tsit5(); callback = nothing, saveat, tstops, abstol, reltol, dtmax, maxiters) -> integrator

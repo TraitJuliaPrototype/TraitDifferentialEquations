@@ -94,3 +94,28 @@ _state(u0::AbstractVector) = Vector{Float64}(u0)
 _promote_state(u0::Vector{Float64}, p::AbstractArray{D}) where {D<:ForwardDiff.Dual} = Vector{D}(u0)
 _promote_state(u0::Vector, p) = u0
 
+
+"""
+    remake(prob::ODEProblem; u0 = prob.u0, tspan = prob.tspan, p = prob.p, callback)
+
+SciML's `remake`: a problem like `prob` with the fields given changed. The user's functions are taken back from
+the problem with their attributes (a compiled function stays compiled) and entered again at the new problem's
+types, partially evaluated on the new parameters; the system object, the mass matrix, the Jacobian prototype and
+(unless `callback` is given) the callbacks are kept. The state takes the parameters' dual type, as in
+`ODEProblem`.
+"""
+Base.@nospecializeinfer function remake(prob::ODEProblem; @nospecialize(u0 = prob.u0), @nospecialize(tspan = prob.tspan),
+                                        @nospecialize(p = prob.p), @nospecialize(callback = missing))
+    # the function as the user gave it: plain, or under its cast (`fplain`, partially evaluated); else from its kept form
+    fp = prob.fplain.f
+    f = fp === nothing ? _user_function(getfield(prob, :f)) : rewrap(r -> r.f, fp)   # the field as stored, not as a bound views it
+    jac = _jac_given(prob) ? _user_function(getfield(prob, :jac)) : nothing
+    cbs = callback === missing ? copy(prob.callbacks) : _callbacks(callback)
+    u = _promote_state(_state(u0), p)
+    return _problem(f, jac, u, (Float64(tspan[1]), Float64(tspan[2])), p, prob.sys, prob.mass_matrix, prob.jac_prototype, cbs)
+end
+"Whether a problem was given a Jacobian (its kept Jacobian is not the library's `core_no_jacobian`)."
+_jac_given(::ODEProblem{T,P,F,J}) where {T,P,F,J} = J !== CoreNoJacobian
+"The user's function back from its kept, partially evaluated form, with its attribute."
+Base.@nospecializeinfer _user_function(@nospecialize(k)) =
+    k isa Union{Dynamic,Kept,Compiled} ? rewrap(r -> r.f, k) : compiled_for(k.f)

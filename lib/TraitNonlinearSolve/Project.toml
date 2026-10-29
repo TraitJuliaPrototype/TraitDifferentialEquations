@@ -1,0 +1,17 @@
+name = "TraitNonlinearSolve"
+uuid = "86edfd3c-937f-4bf9-a2a0-6a6d82efd3fb"
+version = "0.0.1"
+
+[deps]
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+ODECore = "dde65c3d-a5a2-4c0b-ae11-c816328cb47b"
+TraitWorld = "7a3c1e52-9b4d-4f6e-8a21-5d0c3b9e7f14"
+
+[sources]
+ODECore = {path = "../ODECore"}
+TraitWorld = {path = "../../../TraitWorld"}
+
+[compat]
+ForwardDiff = "1.4.6"
+julia = "1.13"

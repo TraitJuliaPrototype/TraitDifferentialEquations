@@ -82,6 +82,28 @@ Base.@nospecializeinfer dual_jacobian(@nospecialize(f), n::Int, ::Val{N}) where 
     DualJacobian(f, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
 
 """
+    Rodas5Steps
+
+Rodas5's dense output (open issue 117): per accepted step its start `t0`, its end `t1` (an event's time where an
+event cut it), its size `dt`, the states at both ends of the full step and the interpolant's three terms; the state
+between by Rodas5's own interpolant (`rodas5_interp!`), as its `saveat` and event location take it.
+"""
+struct Rodas5Steps
+    t0::Vector{Float64}
+    t1::Vector{Float64}
+    dt::Vector{Float64}
+    u0::Vector{Vector{Float64}}
+    u1::Vector{Vector{Float64}}
+    k::Vector{Vector{Vector{Float64}}}
+end
+Rodas5Steps() = Rodas5Steps(Float64[], Float64[], Float64[], Vector{Float64}[], Vector{Float64}[], Vector{Vector{Float64}}[])
+function push_step!(d::Rodas5Steps, t0::Float64, t1::Float64, dt::Float64, u0::Vector{Float64}, u1::Vector{Float64},
+                    kint::Vector{Vector{Float64}})
+    push!(d.t0, t0); push!(d.t1, t1); push!(d.dt, dt)
+    push!(d.u0, copy(u0)); push!(d.u1, copy(u1)); push!(d.k, [copy(k) for k in kint])
+    return nothing
+end
+"""
 Rodas5's state between steps, with its problem and the driver's state: the integrator's view for callbacks, the
 stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the
 problem's `jacobian!`. After an accepted step `uprev` is its start, `unew` its end and `kint` its interpolant's
@@ -129,6 +151,7 @@ mutable struct Rodas5Integrator{JC,M}
     iters::Int
     retcode::Symbol
     dt_reset::Bool
+    const dense::Union{Nothing,Rodas5Steps}   # the steps, for dense output (`opts.dense`)
 end
 step_tstop!(i::Rodas5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
 step_terminate!(i::Rodas5Integrator) = (i.terminated = true; nothing)
@@ -141,7 +164,8 @@ step_dt_reset!(i::Rodas5Integrator) = (i.dt_reset = true; nothing)
 @implement StepView Rodas5Integrator{JC,M} where {JC,M}
 @implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M} begin
     advance!(i) = rodas5_advance!(i)
-    core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf)
+    core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf,
+                                             kept_interpolant(_steps(i.dense)))
 end
 
 "One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."
@@ -205,6 +229,11 @@ function rodas5_interp!(out::Vector{Float64}, θ::Float64, u0::Vector{Float64}, 
     end
     return out
 end
+# Rodas5's dense output, by its interpolant (after it: the implementation's check infers the result)
+@implement Interpolant{Vector{Float64},Float64} Rodas5Steps begin
+    interpolate(d, τ) = (k = dense_step(d.t1, τ);
+                         rodas5_interp!(similar(d.u0[k]), (τ - d.t0[k]) / d.dt[k], d.u0[k], d.u1[k], d.k[k]))
+end
 
 #     solve_core(Rodas5(), m::CoreProblem, callbacks, opts) -> CoreSolution
 #
@@ -257,7 +286,8 @@ function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, ls,
                                     t0, Float64[], d, c, zeros(Float64, length(c)), z(),
-                                    nothing, opts, tf, 0.0, Float64[], Vector{Float64}[], 1, 0, :Default, false)
+                                    nothing, opts, tf, 0.0, Float64[], Vector{Float64}[], 1, 0, :Default, false,
+                                    opts.dense ? Rodas5Steps() : nothing)
     iv = Dynamic{StepView{Vector{Float64},Float64}}(i)
     i.iv = iv
     for τ in opts.tstops
@@ -337,6 +367,7 @@ function rodas5_advance!(i::Rodas5Integrator)
                     i.t = te
                 end
             end
+            i.dense === nothing || push_step!(i.dense, i.tprev, i.t, dt, i.uprev, i.unew, i.kint)
             tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
             if isempty(saveat)
                 push!(i.ts, i.t); push!(i.us, copy(i.u))

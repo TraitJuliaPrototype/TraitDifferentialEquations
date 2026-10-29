@@ -35,7 +35,8 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        ODEFunction, HasMassMatrix, mass_matrix, HasJacobianPrototype, jac_prototype, HasSystem, system, getsystem,
        HasCallbacks, problem_callbacks, takes_mass_matrix, auto_dt_reset!, save_discretes!, parameters_at,
        initialize!, event_initialize!, event_affect_neg!, no_initialize,
-       CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!
+       CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!, remake,
+       Interpolant, interpolate, HermiteSteps, push_step!, dense_step, kept_interpolant
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -170,9 +171,21 @@ end
 end
 
 """
-What a solver returns (the core's solution, W-63): the saved times and states, the return code and the
-counts. It has no problem: the core never sees the parameters. `solve_ode` makes the user's `ODESolution`
-from it.
+    Interpolant{U, T}
+
+A solver's dense output (open issue 117): the state at any time `τ` within the steps it took, by the solver's
+own interpolant. An open set, as the solvers are: each solver keeps its steps in a record of its own that
+implements this trait (`HermiteSteps` for Tsit5, TraitRodas' `Rodas5Steps`), and the solution keeps it as a
+`Kept{Interpolant{U, T}}`, so its type has no axis for the solver. `τ` is within the steps (the solution checks).
+"""
+@trait Interpolant{U, T} begin
+    interpolate(ip::Interpolant{U, T}, τ::T)::U
+end
+
+"""
+What a solver returns (the core's solution, W-63): the saved times and states, the return code, the
+counts, and the solver's interpolant (`interp`: kept, or `nothing` when the solve kept no dense output). It has
+no problem: the core never sees the parameters. `solve_ode` makes the user's `ODESolution` from it.
 """
 struct CoreSolution{T}
     t::Vector{Float64}
@@ -181,7 +194,47 @@ struct CoreSolution{T}
     naccept::Int
     nreject::Int
     nf::Int
+    interp::Union{Nothing,Kept{Interpolant{Vector{T},Float64}}}
 end
+"A solution without dense output."
+CoreSolution{T}(t, u, retcode, naccept, nreject, nf) where {T} = CoreSolution{T}(t, u, retcode, naccept, nreject, nf, nothing)
+
+"""
+The step of a dense output that holds `τ`: the first whose end is at or after `τ` (so at an event's time the step
+that ends there, whose state is the one saved before the event's affect); `ends` are the steps' ends, in order.
+"""
+dense_step(ends::Vector{Float64}, τ::Float64) = min(searchsortedfirst(ends, τ), length(ends))
+
+"""
+    HermiteSteps{T}
+
+Tsit5's dense output: per accepted step its start `t0`, its end `t1` (an event's time where an event cut it), its
+size `dt`, and the states and derivatives at both ends of the full step; the state between by the cubic Hermite
+interpolant (as Tsit5's `saveat` and event location take it).
+"""
+struct HermiteSteps{T}
+    t0::Vector{Float64}
+    t1::Vector{Float64}
+    dt::Vector{Float64}
+    u0::Vector{Vector{T}}
+    f0::Vector{Vector{T}}
+    u1::Vector{Vector{T}}
+    f1::Vector{Vector{T}}
+end
+HermiteSteps{T}() where {T} = HermiteSteps{T}(Float64[], Float64[], Float64[], Vector{T}[], Vector{T}[], Vector{T}[], Vector{T}[])
+"Keep an accepted step."
+function push_step!(d::HermiteSteps{T}, t0::Float64, t1::Float64, dt::Float64, u0::Vector{T}, f0::Vector{T}, u1::Vector{T}, f1::Vector{T}) where {T}
+    push!(d.t0, t0); push!(d.t1, t1); push!(d.dt, dt)
+    push!(d.u0, copy(u0)); push!(d.f0, copy(f0)); push!(d.u1, copy(u1)); push!(d.f1, copy(f1))
+    return nothing
+end
+@implement Interpolant{Vector{T},Float64} HermiteSteps{T} where {T} begin
+    interpolate(d, τ) = (k = dense_step(d.t1, τ);
+                         hermite!(similar(d.u0[k]), (τ - d.t0[k]) / d.dt[k], d.dt[k], d.u0[k], d.f0[k], d.u1[k], d.f1[k]))
+end
+"A solver's steps as the solution keeps them: kept as an `Interpolant`, or `nothing` (no dense output, or no step taken)."
+kept_interpolant(::Nothing) = nothing
+kept_interpolant(d::Interpolant{U,Float64}) where {U} = Kept{Interpolant{U,Float64}}(d)
 
 """
     CoreIntegrator{U, T}
@@ -758,8 +811,10 @@ struct SolverOptions
     maxiters::Int
     saveat::Vector{Float64}          # empty: save every step
     tstops::Vector{Float64}          # times the solver must step to (SciML's `tstops`)
+    dense::Bool                      # keep the solver's interpolant (SciML's `dense`; default: without `saveat`)
 end
 SolverOptions(abstol, reltol, dtmax, maxiters, saveat) = SolverOptions(abstol, reltol, dtmax, maxiters, saveat, Float64[])
+SolverOptions(abstol, reltol, dtmax, maxiters, saveat, tstops) = SolverOptions(abstol, reltol, dtmax, maxiters, saveat, tstops, isempty(saveat))
 "The front end's defaults (`solve`'s keywords)."
 const DEFAULT_OPTIONS = SolverOptions(1e-6, 1e-3, Inf, 100_000, Float64[], Float64[])
 
@@ -768,9 +823,11 @@ const DEFAULT_OPTIONS = SolverOptions(1e-6, 1e-3, Inf, 100_000, Float64[], Float
 
 A solution as the user sees it (SciML's move 5): the saved times `t` and states `u`, the return code, the
 counts, and the problem it solves, kept with its attribute (`sol.prob`, a `Kept{ODEProblemTrait{T, P}}`). Its
-type names the state's element type and the parameters' type, never the model or the function: one solution
-type for every function, model and problem type of those types. A `Trajectory{Vector{T}, Float64}`;
-`sol(τ)` is `at(sol, τ)`.
+type names the state's element type and the parameters' type, never the model, the function or the solver: one
+solution type for every function, model, problem type and solver of those types. A
+`Trajectory{Vector{T}, Float64}`; `sol(τ)` is `at(sol, τ)`: by the solver's interpolant where the solve kept
+one (`interp`, a `Kept{Interpolant{Vector{T}, Float64}}`: with `dense`, the default without `saveat`; open
+issue 117), else linear between the saved states.
 """
 struct ODESolution{T,P}
     t::Vector{Float64}
@@ -784,6 +841,7 @@ struct ODESolution{T,P}
     names::Union{Nothing,Dynamic{IndexProvider}} # its names, or none
     pt::Vector{Float64}                          # the parameters saved by callbacks (`save_discretes!`): times,
     pu::Vector{P}                                # and values; empty when no callback could change them
+    interp::Union{Nothing,Kept{Interpolant{Vector{T},Float64}}}   # the solver's dense output, or none
 end
 
 # the solution as a trajectory (move 5): `Trajectory` is TraitArrayTools', RecursiveArrayTools' stand-in,
@@ -791,9 +849,38 @@ end
 @implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P} begin
     times(s) = getfield(s, :t)
     state(s, k) = getfield(s, :u)[k]
-    at(s, τ) = linear_at(getfield(s, :t), getfield(s, :u), τ)       # the solution keeps no interpolant
+    at(s, τ) = dense_at(getfield(s, :interp), getfield(s, :t), getfield(s, :u), τ)
 end
-(s::ODESolution)(τ::Real) = at(s, Float64(τ))
+"The state at `τ`: by the solver's interpolant, or linear between the saved states without one; `DomainError` outside the saved times."
+function dense_at(ip, ts::Vector{Float64}, us::Vector{Vector{E}}, τ::Float64) where {E}
+    ip === nothing && return linear_at(ts, us, τ)
+    (isempty(ts) || τ < ts[1] || τ > ts[end]) &&
+        throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
+    return interpolate(ip, τ)
+end
+"""
+    sol(τ; idxs = nothing)
+    sol(τ, idx)
+    sol(τs::AbstractVector; idxs = nothing)
+
+The solution at `τ` (`at`), or the values `idxs` select there (SciML's `sol(t; idxs)`): a state's index (`Int`), a
+name (`Symbol`, through the problem's names), or a vector of them. `sol(τ; idxs)` is `sol(τ, idxs)`, a call that
+dispatches on the index's type, so a library that owns an index type gives its own method
+`(sol::ODESolution)(τ::Real, idx::ItsIndex)` (NetworkDynamics' structured indices; a shared protocol for them is
+open issue 118). At several times: a `DiffEqArray` of the states without `idxs`, else the vector of the values.
+"""
+(s::ODESolution)(τ::Real; idxs = nothing) = idxs === nothing ? at(s, Float64(τ)) : s(τ, idxs)
+(s::ODESolution)(τs::AbstractVector{<:Real}; idxs = nothing) =
+    idxs === nothing ? DiffEqArray([at(s, Float64(τ)) for τ in τs], τs) : [s(τ, idxs) for τ in τs]
+(s::ODESolution)(τ::Real, i::Int) = at(s, Float64(τ))[i]
+function (s::ODESolution)(τ::Real, sym::Symbol)
+    i = variable_index(s, sym)
+    i === nothing && throw(ArgumentError("no state variable named :$sym"))
+    return at(s, Float64(τ))[i]
+end
+(s::ODESolution)(τ::Real, idxs::AbstractVector) = [s(τ, i) for i in idxs]
+(s::ODESolution)(τ::Real, idx) = throw(ArgumentError(string("the solution takes indices of type `Int` or `Symbol`; one of type ",
+    typeof(idx), " needs a method `(sol::ODESolution)(τ::Real, idx::", nameof(typeof(idx)), ")` by the index type's owner")))
 
 # --- symbolic access (move 4, E-160): the solution's names are its problem's ---------------------------------
 # the operations on the kept names themselves
@@ -838,7 +925,7 @@ Base.getindex(s::ODESolution, sym::Symbol) = getseries(s, sym)
 Base.getproperty(s::ODESolution, name::Symbol) = name === :ps ? ParamView(s) : getfield(s, name)
 "The solver's solution given its problem, its system, names and saved parameters (the outer layer, W-63)."
 with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys, names, pt::Vector{Float64}, pu::Vector{P}) where {T,P} =
-    ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys, names, pt, pu)
+    ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys, names, pt, pu, s.interp)
 
 """
 An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
@@ -998,6 +1085,7 @@ mutable struct Tsit5Integrator{T,M}
     iters::Int
     retcode::Symbol                  # :Default while it runs; :MaxIters
     dt_reset::Bool                   # `auto_dt_reset!`: the next step's size estimated again
+    const dense::Union{Nothing,HermiteSteps{T}}   # the steps, for dense output (`opts.dense`)
 end
 step_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
 step_terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
@@ -1008,8 +1096,11 @@ step_dt_reset!(i::Tsit5Integrator) = (i.dt_reset = true; nothing)
 @implement StepView Tsit5Integrator{T,M} where {T,M}
 @implement CoreIntegrator{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M} begin
     advance!(i) = tsit5_advance!(i)
-    core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf)
+    core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf, kept_interpolant(_steps(i.dense)))
 end
+"A solver's kept steps, or `nothing` where it kept none or took no step."
+_steps(::Nothing) = nothing
+_steps(d) = isempty(d.t0) ? nothing : d
 "A driver's return code: `:Terminated`, `:MaxIters`, `:Success` at the span's end, `:Default` while it runs."
 _retcode(i) = i.terminated ? :Terminated : i.retcode !== :Default ? i.retcode : i.t >= i.tf ? :Success : :Default
 
@@ -1234,7 +1325,8 @@ function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::
     i = Tsit5Integrator{T,typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false,
                                      z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
                                      t0, z(), Float64[], d, c, zeros(Float64, length(c)),
-                                     nothing, opts, tf, 0.0, Float64[], Vector{T}[], 1, 0, :Default, false)
+                                     nothing, opts, tf, 0.0, Float64[], Vector{T}[], 1, 0, :Default, false,
+                                     opts.dense ? HermiteSteps{T}() : nothing)
     iv = Dynamic{StepView{Vector{T},Float64}}(i)
     i.iv = iv
     for τ in opts.tstops
@@ -1372,6 +1464,7 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
                     i.t = te
                 end
             end
+            i.dense === nothing || push_step!(i.dense, i.tprev, i.t, dt, i.uprev, i.kprev, i.unew, i.k7)
             tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
             if isempty(saveat)
                 push!(i.ts, i.t); push!(i.us, copy(i.u))

@@ -7,6 +7,7 @@ authors = ["Frank Hellmann"]
 TraitArrayTools = "1b9b79cd-6bec-4e99-a18c-2677d046d2b7"
 TraitIndexing = "33517989-6c57-4017-8c1a-5a2ed17d5e8b"
 TraitRodas = "bf920f43-cef2-427b-965f-14169ab0c399"
+TraitNonlinearSolve = "86edfd3c-937f-4bf9-a2a0-6a6d82efd3fb"
 ODECore = "dde65c3d-a5a2-4c0b-ae11-c816328cb47b"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -17,6 +18,7 @@ TraitArrayTools = {path = "lib/TraitArrayTools"}
 TraitIndexing = {path = "lib/TraitIndexing"}
 ODECore = {path = "lib/ODECore"}
 TraitRodas = {path = "lib/TraitRodas"}
+TraitNonlinearSolve = {path = "lib/TraitNonlinearSolve"}
 TraitWorld = {path = "../TraitWorld"}
 
 [compat]
