@@ -26,16 +26,18 @@ end
 """
     linear_at(ts, us, τ)
 
-The state at `τ`, linear between the saved states `us` at the times `ts`; `DomainError` outside them. At the
-state's element type: a `Float32` state stays `Float32`. For trajectories that keep no interpolant.
+The state at `τ`, linear between the saved states `us` at the times `ts`; `DomainError` outside them. At a
+saved time, the first state saved there (at an event's time, the state before the event: SciML's left
+continuity). At the state's element type: a `Float32` state stays `Float32`. For trajectories that keep no
+interpolant.
 """
 function linear_at(ts::Vector{Float64}, us::Vector{Vector{E}}, τ::Float64) where {E}
     (isempty(ts) || τ < ts[1] || τ > ts[end]) &&
         throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
-    k = searchsortedlast(ts, τ)
-    k == length(ts) && return copy(us[k])
-    θ = E((τ - ts[k]) / (ts[k+1] - ts[k]))
-    return (1 - θ) .* us[k] .+ θ .* us[k+1]
+    k = searchsortedfirst(ts, τ)
+    ts[k] == τ && return copy(us[k])
+    θ = E((τ - ts[k-1]) / (ts[k] - ts[k-1]))
+    return (1 - θ) .* us[k-1] .+ θ .* us[k]
 end
 
 """

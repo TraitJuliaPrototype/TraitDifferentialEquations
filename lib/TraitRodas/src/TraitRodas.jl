@@ -14,7 +14,7 @@ using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, Ste
                CoreIntegrator, core_rhs!, core_jacobian!, enter_step_callbacks, initialize_step_callbacks!, _add_tstop!,
                step_event_condition, step_condition, step_affect!, locate_events!, event_affect_dir!,
                _save_start!, _retcode, run_to_end!, LinearSolver, linfactor, DenseLU, Interpolant, dense_step,
-               kept_interpolant, _steps
+               kept_interpolant, _steps, save_step!, save_state!
 import ODECore: solve_core, init_core, advance!, core_solution, step_tstop!, step_terminate!, step_interp!, step_dt_reset!,
                 interpolate, push_step!
 import ForwardDiff

@@ -37,7 +37,7 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        HasCallbacks, problem_callbacks, takes_mass_matrix, auto_dt_reset!, save_discretes!, parameters_at,
        initialize!, event_initialize!, event_affect_neg!, no_initialize,
        CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!, remake,
-       Interpolant, interpolate, HermiteSteps, push_step!, dense_step, kept_interpolant
+       Interpolant, interpolate, Tsit5Steps, push_step!, dense_step, kept_interpolant
 
 # --- the traits --------------------------------------------------------------------------
 
@@ -176,7 +176,7 @@ end
 
 A solver's dense output (open issue 117): the state at any time `τ` within the steps it took, by the solver's
 own interpolant. An open set, as the solvers are: each solver keeps its steps in a record of its own that
-implements this trait (`HermiteSteps` for Tsit5, TraitRodas' `Rodas5Steps`), and the solution keeps it as a
+implements this trait (`Tsit5Steps` for Tsit5, TraitRodas' `Rodas5Steps`), and the solution keeps it as a
 `Kept{Interpolant{U, T}}`, so its type has no axis for the solver. `τ` is within the steps (the solution checks).
 """
 @trait Interpolant{U, T} begin
@@ -207,31 +207,25 @@ that ends there, whose state is the one saved before the event's affect); `ends`
 dense_step(ends::Vector{Float64}, τ::Float64) = min(searchsortedfirst(ends, τ), length(ends))
 
 """
-    HermiteSteps{T}
+    Tsit5Steps{T}
 
 Tsit5's dense output: per accepted step its start `t0`, its end `t1` (an event's time where an event cut it), its
-size `dt`, and the states and derivatives at both ends of the full step; the state between by the cubic Hermite
-interpolant (as Tsit5's `saveat` and event location take it).
+size `dt`, the state at its start and its seven stages `k`; the state between by Tsit5's own interpolant
+(`tsit5_interp!`), as its `saveat` and event location take it.
 """
-struct HermiteSteps{T}
+struct Tsit5Steps{T}
     t0::Vector{Float64}
     t1::Vector{Float64}
     dt::Vector{Float64}
     u0::Vector{Vector{T}}
-    f0::Vector{Vector{T}}
-    u1::Vector{Vector{T}}
-    f1::Vector{Vector{T}}
+    k::Vector{NTuple{7,Vector{T}}}
 end
-HermiteSteps{T}() where {T} = HermiteSteps{T}(Float64[], Float64[], Float64[], Vector{T}[], Vector{T}[], Vector{T}[], Vector{T}[])
+Tsit5Steps{T}() where {T} = Tsit5Steps{T}(Float64[], Float64[], Float64[], Vector{T}[], NTuple{7,Vector{T}}[])
 "Keep an accepted step."
-function push_step!(d::HermiteSteps{T}, t0::Float64, t1::Float64, dt::Float64, u0::Vector{T}, f0::Vector{T}, u1::Vector{T}, f1::Vector{T}) where {T}
+function push_step!(d::Tsit5Steps{T}, t0::Float64, t1::Float64, dt::Float64, u0::Vector{T}, k::NTuple{7,Vector{T}}) where {T}
     push!(d.t0, t0); push!(d.t1, t1); push!(d.dt, dt)
-    push!(d.u0, copy(u0)); push!(d.f0, copy(f0)); push!(d.u1, copy(u1)); push!(d.f1, copy(f1))
+    push!(d.u0, copy(u0)); push!(d.k, map(copy, k))
     return nothing
-end
-@implement Interpolant{Vector{T},Float64} HermiteSteps{T} where {T} begin
-    interpolate(d, τ) = (k = dense_step(d.t1, τ);
-                         hermite!(similar(d.u0[k]), (τ - d.t0[k]) / d.dt[k], d.dt[k], d.u0[k], d.f0[k], d.u1[k], d.f1[k]))
 end
 "A solver's steps as the solution keeps them: kept as an `Interpolant`, or `nothing` (no dense output, or no step taken)."
 kept_interpolant(::Nothing) = nothing
@@ -556,7 +550,8 @@ The user's callback from plain functions (SciML's): `condition(u, t, integ)::Boo
 called once at the solver's `init` (SciML's `initialize`, without the callback argument). They keep the functions
 before the problem's types are known, each with its attribute (`Kept{Callable}`, traits reference §7.5);
 a solver's `init` enters them at `(U, T, P)` (`enter_callbacks`). Every crossing is an event: an affect
-of `nothing` (SciML's "not an event in this direction") is refused.
+of `nothing` (SciML's "not an event in this direction") is refused. The solution saves the state before and
+after each affect (SciML's `save_positions` at its default; `save_step!`, `save_state!`).
 """
 struct DiscreteCallback
     condition::Callable              # Kept{Callable}: a function kept without a signature
@@ -1079,13 +1074,15 @@ mutable struct Tsit5Integrator{T,M}
     iters::Int
     retcode::Symbol                  # :Default while it runs; :MaxIters
     dt_reset::Bool                   # `auto_dt_reset!`: the next step's size estimated again
-    const dense::Union{Nothing,HermiteSteps{T}}   # the steps, for dense output (`opts.dense`)
+    const dense::Union{Nothing,Tsit5Steps{T}}     # the steps, for dense output (`opts.dense`)
 end
 step_tstop!(i::Tsit5Integrator, τ::Float64) = (_add_tstop!(i.tstops, i.t, τ); nothing)
 step_terminate!(i::Tsit5Integrator) = (i.terminated = true; nothing)
-"The state at `τ` within the last accepted step, by the cubic Hermite interpolant (as for `saveat`)."
+"The state at `τ` within the last accepted step, by Tsit5's interpolant (as for `saveat`): its stages stay until the next step."
 step_interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
-    (hermite!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, i.kprev, i.unew, i.k7); nothing)
+    (tsit5_interp!(out, (τ - i.tprev) / i.dt, i.dt, i.uprev, _stages(i)); nothing)
+"The last accepted step's stages: `kprev` is `f` at its start (`k1` is `f` at its end by then)."
+_stages(i::Tsit5Integrator) = (i.kprev, i.k2, i.k3, i.k4, i.k5, i.k6, i.k7)
 step_dt_reset!(i::Tsit5Integrator) = (i.dt_reset = true; nothing)
 @implement StepView Tsit5Integrator{T,M} where {T,M}
 @implement CoreIntegrator{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M} begin
@@ -1159,23 +1156,47 @@ function initdt(m, i::Tsit5Integrator{T}, tdir::Float64, opts::SolverOptions) wh
     h0 = min(h0, opts.dtmax)
     tmp = i.tmp
     @inbounds for j in eachindex(u); tmp[j] = u[j] + h0 * f0[j]; end
-    core_rhs!(m, i.k2, tmp, t + h0)
+    f1 = i.utilde                    # scratch: the last step's stages stay for its interpolant
+    core_rhs!(m, f1, tmp, t + h0)
     i.nf += 1
-    d2 = sqrt(sum(abs2(primal(i.k2[j] - f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u)) / h0
+    d2 = sqrt(sum(abs2(primal(f1[j] - f0[j]) / sc(u[j])) for j in eachindex(u)) / length(u)) / h0
     h1 = max(d1, d2) <= 1e-15 ? max(1e-6, h0 * 1e-3) : (0.01 / max(d1, d2))^(1 / 5)
     return min(100 * h0, h1, opts.dtmax)
 end
 
-"The cubic Hermite interpolant between two accepted states, for `saveat`."
-function hermite!(out::Vector{T}, θ::Float64, dt::Float64, u0::Vector{T}, f0::Vector{T}, u1::Vector{T}, f1::Vector{T}) where {T}
-    h00 = (1 + 2θ) * (1 - θ)^2
-    h10 = θ * (1 - θ)^2
-    h01 = θ^2 * (3 - 2θ)
-    h11 = θ^2 * (θ - 1)
+# Tsit5's free interpolant: the coefficients of OrdinaryDiffEqTsit5 2.1.5's `Tsit5Interp` (Tsitouras 2011), at
+# Float64; the weight of stage i at θ is θ (ri1 + ri2 θ + ri3 θ² + ri4 θ³), ri1 = 0 for i > 1
+const r11, r12, r13, r14 = 1.0, -2.763706197274826, 2.9132554618219126, -1.0530884977290216
+const r22, r23, r24 = 0.13169999999999998, -0.2234, 0.1017
+const r32, r33, r34 = 3.9302962368947516, -5.941033872131505, 2.490627285651253
+const r42, r43, r44 = -12.411077166933676, 30.33818863028232, -16.548102889244902
+const r52, r53, r54 = 37.50931341651104, -88.1789048947664, 47.37952196281928
+const r62, r63, r64 = -27.896526289197286, 65.09189467479366, -34.87065786149661
+const r72, r73, r74 = 1.5, -4.0, 2.5
+
+"""
+Tsit5's own interpolant (the free fourth-order continuous extension, OrdinaryDiffEq's for Tsit5) at `θ` within a
+step of size `dt` from `u0`, with the step's seven stages `k`.
+"""
+function tsit5_interp!(out::Vector{T}, θ::Float64, dt::Float64, u0::Vector{T}, k::NTuple{7,Vector{T}}) where {T}
+    θ2 = θ * θ
+    b1 = θ * evalpoly(θ, (r11, r12, r13, r14))
+    b2 = θ2 * evalpoly(θ, (r22, r23, r24))
+    b3 = θ2 * evalpoly(θ, (r32, r33, r34))
+    b4 = θ2 * evalpoly(θ, (r42, r43, r44))
+    b5 = θ2 * evalpoly(θ, (r52, r53, r54))
+    b6 = θ2 * evalpoly(θ, (r62, r63, r64))
+    b7 = θ2 * evalpoly(θ, (r72, r73, r74))
+    k1, k2, k3, k4, k5, k6, k7 = k
     @inbounds for j in eachindex(out)
-        out[j] = h00 * u0[j] + h10 * dt * f0[j] + h01 * u1[j] + h11 * dt * f1[j]
+        out[j] = u0[j] + dt * (k1[j] * b1 + k2[j] * b2 + k3[j] * b3 + k4[j] * b4 + k5[j] * b5 + k6[j] * b6 + k7[j] * b7)
     end
     return out
+end
+# Tsit5's dense output, by its interpolant (after it: the implementation's check infers the result)
+@implement Interpolant{Vector{T},Float64} Tsit5Steps{T} where {T} begin
+    interpolate(d, τ) = (k = dense_step(d.t1, τ);
+                         tsit5_interp!(similar(d.u0[k]), (τ - d.t0[k]) / d.dt[k], d.dt[k], d.u0[k], d.k[k]))
 end
 
 # --- the driver ---------------------------------------------------------------------------------
@@ -1320,7 +1341,7 @@ function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::
                                      z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
                                      t0, z(), Float64[], d, c, zeros(Float64, length(c)),
                                      nothing, opts, tf, 0.0, Float64[], Vector{T}[], 1, 0, :Default, false,
-                                     opts.dense ? HermiteSteps{T}() : nothing)
+                                     opts.dense ? Tsit5Steps{T}() : nothing)
     iv = Dynamic{StepView{Vector{T},Float64}}(i)
     i.iv = iv
     for τ in opts.tstops
@@ -1344,6 +1365,37 @@ function _save_start!(ts::Vector{Float64}, us::Vector{Vector{T}}, u::Vector{T}, 
     end
     return !isempty(saveat) && saveat[1] == t0
 end
+"""
+The saves after an accepted step (SciML's `savevalues!`), shared by the solvers: without `saveat` the state at the
+step's end; with it, the times of `saveat` the step reached, by the solver's interpolant (`step_interp!`), the state
+itself at a time equal to the step's end. Returns whether the state at `i.t` was saved (every step, or a time of
+`saveat`): a callback's save before its affect is then not repeated.
+"""
+function save_step!(i)
+    saveat = i.opts.saveat
+    if isempty(saveat)
+        push!(i.ts, i.t); push!(i.us, copy(i.u))
+        return true
+    end
+    exact = false
+    while i.isave <= length(saveat) && saveat[i.isave] <= i.t
+        τ = saveat[i.isave]
+        if τ == i.t
+            push!(i.us, copy(i.u)); exact = true
+        else
+            out = similar(i.u); step_interp!(i, out, τ); push!(i.us, out)
+        end
+        push!(i.ts, τ)
+        i.isave += 1
+    end
+    return exact
+end
+"""
+Save the state at `i.t`: an event's saves before and after its affect (SciML's `save_positions`, at their
+default): before it unless the step's saves just saved that state, after it where the affect left the state
+modified (a continuous callback) or always (a discrete one).
+"""
+save_state!(i) = (push!(i.ts, i.t); push!(i.us, copy(i.u)); nothing)
 
 """
 The time of a sign change of a continuous callback's condition within `(tl, tr]`, `gl` its value at
@@ -1419,8 +1471,6 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
         i.dtnext = initdt(m, i, 1.0, opts)
         i.dt_reset = false
     end
-    n = length(i.u)
-    saveat = opts.saveat
     dt = i.dtnext
     # PI controller, OrdinaryDiffEq's defaults for a 5th-order method
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
@@ -1458,21 +1508,15 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
                     i.t = te
                 end
             end
-            i.dense === nothing || push_step!(i.dense, i.tprev, i.t, dt, i.uprev, i.kprev, i.unew, i.k7)
+            i.dense === nothing || push_step!(i.dense, i.tprev, i.t, dt, i.uprev, _stages(i))
             tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
-            if isempty(saveat)
-                push!(i.ts, i.t); push!(i.us, copy(i.u))
-            else
-                while i.isave <= length(saveat) && saveat[i.isave] <= i.t
-                    θ = (saveat[i.isave] - i.tprev) / dt
-                    push!(i.ts, saveat[i.isave])
-                    push!(i.us, hermite!(zeros(T, n), θ, dt, i.uprev, i.kprev, i.unew, i.k7))
-                    i.isave += 1
-                end
-            end
+            saved = save_step!(i)
             if ke != 0
+                saved || save_state!(i)                      # the state before the affect
                 i.u_modified = true
                 event_affect_dir!(events[ke], iv, up)
+                i.u_modified && save_state!(i)               # and after it
+                saved = false
                 core_rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
                 i.nf += 1
                 i.u_modified = false
@@ -1482,6 +1526,7 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
             end
             T === Float64 && for cb in i.callbacks
                 if step_condition(cb, i.u, i.t, iv)
+                    saved || save_state!(i)                  # the state before the affect
                     i.u_modified = true
                     step_affect!(cb, iv)
                     if i.u_modified
@@ -1489,11 +1534,13 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
                         i.nf += 1
                         i.u_modified = false
                     end
+                    save_state!(i)                           # and after it
+                    saved = false
                 end
                 i.terminated && break
             end
             q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
-            dt = min(dt / q, opts.dtmax)
+            dt = ke == 0 ? min(dt / q, opts.dtmax) : dt   # after an event, the step's own size (SciML's `dtrelax = 1`)
             i.qold = max(EEst, 1e-4)
             i.dtnext = dt
             return true

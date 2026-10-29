@@ -316,7 +316,7 @@ end
 
 """
 Rodas5's `advance!`: one accepted step (rejected attempts within it), its continuous callbacks' events (bisection
-on the interpolant, as Tsit5's), the saves, then the discrete callbacks; `false` when it cannot step.
+on the interpolant, as Tsit5's), the saves (`save_step!`; before and after an event's affect), then the discrete callbacks; `false` when it cannot step.
 """
 function rodas5_advance!(i::Rodas5Integrator)
     m, opts, tf = i.m, i.opts, i.tf
@@ -332,8 +332,6 @@ function rodas5_advance!(i::Rodas5Integrator)
         i.dtnext = rodas5_initdt!(i)
         i.dt_reset = false
     end
-    n = length(i.u)
-    saveat = opts.saveat
     dt = i.dtnext
     beta1, beta2, gamma, qmin, qmax = 7 / 50, 2 / 25, 0.9, 0.2, 10.0
     while i.t < tf && !i.terminated
@@ -369,18 +367,13 @@ function rodas5_advance!(i::Rodas5Integrator)
             end
             i.dense === nothing || push_step!(i.dense, i.tprev, i.t, dt, i.uprev, i.unew, i.kint)
             tstop_hit && ke == 0 && popfirst!(i.tstops)      # a tstop behind an event stays
-            if isempty(saveat)
-                push!(i.ts, i.t); push!(i.us, copy(i.u))
-            else
-                while i.isave <= length(saveat) && saveat[i.isave] <= i.t
-                    push!(i.ts, saveat[i.isave])
-                    push!(i.us, rodas5_interp!(zeros(Float64, n), (saveat[i.isave] - i.tprev) / dt, i.uprev, i.unew, i.kint))
-                    i.isave += 1
-                end
-            end
+            saved = save_step!(i)
             if ke != 0
+                saved || save_state!(i)                      # the state before the affect
                 i.u_modified = true
                 event_affect_dir!(events[ke], iv, up)
+                i.u_modified && save_state!(i)               # and after it
+                saved = false
                 i.u_modified = false
                 for k in eachindex(events)                   # the conditions again at the event's state;
                     i.evprev[k] = k == ke ? NaN : step_event_condition(events[k], i.u, i.t, iv)
@@ -388,14 +381,17 @@ function rodas5_advance!(i::Rodas5Integrator)
             end
             for cb in i.callbacks
                 if step_condition(cb, i.u, i.t, iv)
+                    saved || save_state!(i)                  # the state before the affect
                     i.u_modified = true
                     step_affect!(cb, iv)
                     i.u_modified = false
+                    save_state!(i)                           # and after it
+                    saved = false
                 end
                 i.terminated && break
             end
             q = clamp(q11 / i.qold^beta2 / gamma, 1 / qmax, 1 / qmin)
-            dt = min(dt / q, opts.dtmax)
+            dt = ke == 0 ? min(dt / q, opts.dtmax) : dt   # after an event, the step's own size (SciML's `dtrelax = 1`)
             i.qold = max(EEst, 1e-4)
             i.dtnext = dt
             return true
