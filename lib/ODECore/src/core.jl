@@ -327,19 +327,19 @@ core_problem(prob::ODEProblemTrait) =
     ContinuousCallback(condition, affect!)
 
 The user's callback from two plain functions (SciML's): `condition(u, t, integ)::Bool` (discrete) or
-`::Float64` (continuous: an event where it changes sign), and `affect!(integ)`. Plain records: they
-keep the functions as given, before the problem's types are known; a solver's `init` enters them at
-`(U, T, P)` (`enter_callbacks`).
+`::Float64` (continuous: an event where it changes sign), and `affect!(integ)`. They keep the functions
+before the problem's types are known, each with its attribute (`Kept{Callable}`, traits reference §7.5);
+a solver's `init` enters them at `(U, T, P)` (`enter_callbacks`).
 """
 struct DiscreteCallback
-    condition::Any
-    affect!::Any
-    Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a)) = new(c, a)
+    condition::Callable              # Kept{Callable}: a function kept without a signature
+    affect!::Callable
+    Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a)) = new(Kept{Callable}(c), Kept{Callable}(a))
 end
 struct ContinuousCallback
-    condition::Any
-    affect!::Any
-    Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a)) = new(c, a)
+    condition::Callable
+    affect!::Callable
+    Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a)) = new(Kept{Callable}(c), Kept{Callable}(a))
 end
 
 "A discrete callback as the integrator keeps it: two plain functions entered at the problem's types, each kept with its attribute (`Kept{Callable{…}}`)."
@@ -360,15 +360,12 @@ event_condition(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{Int
 event_affect!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
 @implement EventCallback{U,T,P} FunctionEventCallback{U,T,P} where {U,T,P}
 
-"A plain function kept at a signature (`K`, a `Kept{Callable{…}}`), neither specialized nor inferred on it: entering a new function compiles none of the library's code."
-Base.@nospecializeinfer _keep_fn(::Type{K}, @nospecialize(f)) where {K} = K(f)::K
-
 """
     enter_callbacks(cbs, U, P) -> (discrete, continuous)
 
 A solver's `init` step for callbacks: the user's callbacks entered at the problem's types `(U, Float64, P)`.
 A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions kept at the signatures
-(`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is kept as it is, refused
+(`FunctionCallback`, `FunctionEventCallback`), each with its attribute; a value of a callback type is kept as it is, refused
 if it does not conform at these types. The integrator keeps the two vectors.
 """
 function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
@@ -377,11 +374,9 @@ function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
     c = Kept{EventCallback{U,T,P}}[]
     for cb in cbs
         if cb isa DiscreteCallback
-            push!(d, FunctionCallback{U,T,P}(_keep_fn(Kept{Callable{CondSig{U,T,P},Bool}}, cb.condition),
-                                             _keep_fn(Kept{Callable{AffectSig{U,T,P},Nothing}}, cb.affect!)))
+            push!(d, FunctionCallback{U,T,P}(cb.condition, cb.affect!))
         elseif cb isa ContinuousCallback
-            push!(c, FunctionEventCallback{U,T,P}(_keep_fn(Kept{Callable{CondSig{U,T,P},Float64}}, cb.condition),
-                                                  _keep_fn(Kept{Callable{AffectSig{U,T,P},Nothing}}, cb.affect!)))
+            push!(c, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!))
         else
             _enter_callback!(d, c, cb)
         end
