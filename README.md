@@ -6,7 +6,7 @@ Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 71148
 
 **How it is built (keys):**
 - **`ODEProblemTrait{T, P}`:** declared fields `u0::Vector{T}`, `tspan`, `p::P`; operations `rhs!(prob, du, u, t)` and `jacobian!(prob, J, u, t)` (default: finite differences of `rhs!`). The solver is compiled for what the bound sees: the problem's type.
-- **`ODEFunction(f; jac, mass_matrix)`,** SciML's plain record of the user's functions (branch `w34`). It has no parameter for the state's or the parameters' type; the problem enters its functions at its bounded parameters. The solvers take the identity mass matrix only.
+- **`ODEFunction(f; jac, mass_matrix, sys, jac_prototype)`,** SciML's plain record of the user's functions (branch `w34`). It has no parameter for the state's or the parameters' type; the problem enters its functions at its bounded parameters. A function's optional properties are traits on its type (`HasMassMatrix`, `HasSystem`, `HasJacobianPrototype`): the record's defaults read them, the problem keeps them, and `solve` and `init` refuse a mass matrix other than the identity for an algorithm that takes none (all of TDE's solvers).
 - **TDE's `ODEProblem{T, P, F, J}`** (`ODEProblem(f, u0, tspan, p)`, or `ODEProblem(ODEFunction(f; jac), …)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §7.4), so the constructor applies the bound and the caller's cast:
   - `Dynamic{Callable{RHSSig{P, T}, Nothing}}` by default (`Callable`'s): `F` is the same type for every function, so the solver compiles once per state and parameter type, never per function;
   - under `ODEProblem(compiled_for(f), …)` the function itself: the solver compiles for `f`, with `f` inferred into it, and its result still checked at every call. For every state and parameter type, Rodas5 and gradients included.
@@ -80,6 +80,14 @@ How to run the checks, and their dated results: [`../experiments/w34-sciml/READM
 - the session's 9 `RESULT` lines are unchanged; the suite passes (116 checks);
 - one solution type, `ODESolution{Float64, Vector{Float64}}`, for a function, the same compiled, two callable models, Tsit5 and Rodas5; `plotpoints` compiled per solution type, once for a `Dynamic{Trajectory}`;
 - E-168's session over the split packages, plots through `plotpoints` (TraitMakie 231cf52, two cores): **1.76–1.77 s** (load 1.17 s, first solve 0.19, first plot 0.18, second model 0.053); Python 1.43 s; PlainODE and PlainPlots 1.17–1.20 s. The load is the umbrella's: family members fixed in its image and checked again at load (744 ms; W-84). Move 5 adds about 0.14 s of it (the problems the solutions keep).
+
+## Branch `w34`: W-32's R2 items for NetworkDynamics (E-239, 2026-10-29)
+
+[The R1 census](../writeup/plans/2026-10-29-ndport-r1-census.md) §3, items 1, 2, 12–16 and part of 17, and open issue 119: optional properties of a problem's function as traits, refused by a solver that cannot take them; the system object back (`getsystem`); Rodas5 with continuous callbacks; `init`, `step!`, `solve!` (the drivers are their integrators' `advance!`; `ODEStepper`); parameters saved by callbacks (`save_discretes!`, `parameters_at`); callbacks a problem keeps; `tstops` and the callbacks' `initialize`; `auto_dt_reset!` and `affect_neg!`; `ODEFunction` callable. `test/r2.jl` tests them.
+
+How to run the checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-239 (`../experiments/w34-sciml/r2/`); the session: [`../experiments/ttfx/README.md`](../experiments/ttfx/README.md), section E-239. In brief (julia-1.13 bfca89decc, TraitWorld ca92f22, ede32e3 and f0a79ae, product setting, strict mode off):
+- the session's 9 `RESULT` lines are unchanged; the suite passes (161 checks);
+- E-168's session in setting D: 1.29 s against a same-day control's 1.19 s on 3a51d95; the difference is the load.
 
 ## Checked in W-2 (2026-10-21)
 
