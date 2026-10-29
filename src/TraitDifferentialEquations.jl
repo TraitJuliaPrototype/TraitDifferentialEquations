@@ -58,18 +58,26 @@ which calls the solver at that type.
 """
 Base.@nospecializeinfer function solve(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...)
     # a nonlinear algorithm: TraitNonlinearSolve's front end (SciML's one `solve` for every kind of problem)
-    _isnonlinear(alg) && return TraitNonlinearSolve.solve(prob, alg; kw...)
+    _isnonlinear(alg) && return _solve_nonlinear(prob, alg, values(kw))
     return _solve(prob, alg, _cbs(callback), _options(; kw...))          # any `ODEAlgorithm` (move 3)
 end
+"""
+The forwarding to TraitNonlinearSolve: neither specialized nor inferred on the keywords, so a caller that infers `solve`
+at its keywords' types (an ODE solve) does not infer the nonlinear front end too.
+"""
+Base.@nospecializeinfer _solve_nonlinear(@nospecialize(prob), @nospecialize(alg), @nospecialize(kw::NamedTuple)) =
+    TraitNonlinearSolve.solve(prob, alg; kw...)
 _solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
-"Whether an algorithm is a nonlinear one (`NonlinearAlgorithm`), which the umbrella's `solve` forwards to TraitNonlinearSolve."
-Base.@nospecializeinfer _isnonlinear(@nospecialize(alg)) = conforms(typeof(alg), NonlinearAlgorithm)
+# the front end chooses by the algorithm's trait and the problem's (TraitNonlinearSolve's bounded predicates)
+_isnonlinear(alg) = TraitNonlinearSolve.is_nonlinear_algorithm(alg)
+_isnonlinear_problem(prob) = TraitNonlinearSolve.is_nonlinear_problem(prob)
 """
 The default algorithm (move 3, check 4): the umbrella's own `solve`, Tsit5; for a nonlinear problem
 (`NonlinearProblemTrait`), the default polyalgorithm.
 """
 Base.@nospecializeinfer solve(@nospecialize(prob); kw...) =
-    conforms(typeof(prob), NonlinearProblemTrait) ? TraitNonlinearSolve.solve(prob; kw...) : solve(prob, Tsit5(); kw...)
+    _isnonlinear_problem(prob) ? _solve_nonlinear(prob, TraitNonlinearSolve.NonlinearPolyalg(), values(kw)) :
+                                                     solve(prob, Tsit5(); kw...)
 
 """
     init(prob, Tsit5(); callback = nothing, saveat, tstops, abstol, reltol, dtmax, maxiters) -> integrator

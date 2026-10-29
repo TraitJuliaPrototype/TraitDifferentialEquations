@@ -36,6 +36,16 @@ umbrella's `solve` forwards a nonlinear algorithm here. Neither specialized nor 
 """
 Base.@nospecializeinfer solve(@nospecialize(prob), @nospecialize(alg); kw...) = solve_nonlinear(prob, alg, _nloptions(; kw...))
 Base.@nospecializeinfer solve(@nospecialize(prob); kw...) = solve(prob, NonlinearPolyalg(); kw...)
+# Whether a value is a nonlinear algorithm or problem, by its trait: bounded methods with an untyped fallback after them
+# (traits §5.5; lowering L-3), for a front end that serves several kinds (the umbrella's `solve`). By dispatch, not by
+# `conforms`: a caller that infers the front end would otherwise infer TraitWorld's membership lookup (E-242).
+"Whether `alg` is a `NonlinearAlgorithm` (an algorithm of other traits too counts as one)."
+is_nonlinear_algorithm(alg::NonlinearAlgorithm) = true
+is_nonlinear_algorithm(alg) = false
+"Whether `prob` is a `NonlinearProblemTrait`."
+is_nonlinear_problem(prob::NonlinearProblemTrait) = true
+is_nonlinear_problem(prob) = false
+
 "The outer layer: the problem's functions partially evaluated (`nl_core`), the algorithm, the solution with its problem."
 Base.@nospecializeinfer solve_nonlinear(@nospecialize(prob), alg::NonlinearAlgorithm, opts::NLOptions) =
     nl_with_problem(solve_nl(alg, nl_core(prob), opts), prob, ODECore._system(prob))
