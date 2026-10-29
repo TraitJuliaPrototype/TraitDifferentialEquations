@@ -307,18 +307,15 @@ _rhs!(m::CoreProblem, du, u, t) = core_rhs!(m, du, u, t)
     core_problem(prob) -> CoreProblem
 
 The outer layer's step (W-63): the problem's functions partially evaluated on its parameters. TDE's
-`ODEProblem` keeps them so already (`PartialFn`): they pass as they are kept. For a problem type that
-implements `ODEProblemTrait` itself, its `rhs!` and `jacobian!` partially evaluated on the problem,
-`Dynamic`.
+`ODEProblem` keeps them so already (`PartialFn`): they pass as they are kept, each read back with its
+attribute (traits reference §7.4). For a problem type that implements `ODEProblemTrait` itself, its
+`rhs!` and `jacobian!` partially evaluated on the problem, `Dynamic`.
 """
 function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
     # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
     F <: Dynamic || _member_checked(prob)
-    return CoreProblem(_kept(prob.f), prob.u0, prob.tspan, _kept(prob.jac), prob.ad)
+    return CoreProblem(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad)
 end
-"A kept function passed on with its attribute: a `Dynamic` value as it is, a compiled one cast again."
-_kept(f::Dynamic) = f
-_kept(f) = compiled_for(f)
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
 # a bounded function: `prob` is a trait object, so the trait's defaults serve what the type does not implement
