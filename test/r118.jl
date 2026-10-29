@@ -55,10 +55,15 @@ flow(u, p, i) = p[1] * (u[i + 1] - u[i])
     @test s2(0.3; idxs = Flow(2)) == flow(s2(0.3), [0.5], 2) && s2(0.3; idxs = Node(1)) == s2(0.3)[1]
     @test s2([0.3, 0.6]; idxs = Gain()) == [0.5, 0.5]
     @test s2([0.3, 0.6]; idxs = [Node(1), Flow(1)]) == [[s2(τ)[1], flow(s2(τ), [0.5], 1)] for τ in (0.3, 0.6)]
-    # parameters changed by a callback and saved: each time reads the ones in force there
+    # parameters changed by a callback and saved: each time reads the ones in force there (at the callback's time
+    # the states before and after its affect, both read with the parameters saved at that time, as
+    # SymbolicIndexingInterface reads a time)
     change = DiscreteCallback((u, t, i) -> t >= 0.5 && i.p[1] == 0.5, i -> (i.p[1] = 2.0; save_discretes!(i); nothing))
     sc = solve(ODEProblem(m, copy(U3), (0.0, 1.0), [0.5]), Tsit5(); saveat = [0.25, 0.75], callback = change)
-    @test getu(sc, Gain())(sc) == [0.5, 2.0] && getu(sc, Flow(1))(sc) == [flow(sc.u[1], [0.5], 1), flow(sc.u[2], [2.0], 1)]
+    tc = sc.t[2]
+    @test sc.t == [0.25, tc, tc, 0.75] && 0.5 <= tc < 0.75
+    @test getu(sc, Gain())(sc) == [0.5, 2.0, 2.0, 2.0] &&
+          getu(sc, Flow(1))(sc) == [flow(sc.u[1], [0.5], 1); [flow(sc.u[k], [2.0], 1) for k in 2:4]]
     @test sc(0.75; idxs = Flow(1)) == flow(sc(0.75), [2.0], 1)
     # the integrator, and a callback's view of it
     integ = init(ODEProblem(m, copy(U3), (0.0, 1.0), [0.5]), Tsit5())
