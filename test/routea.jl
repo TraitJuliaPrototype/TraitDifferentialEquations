@@ -67,7 +67,7 @@ end
     end
     # a value of neither callback trait is refused, with the hint naming the bound (traits §5.5)
     e = try; solve(lp(), Tsit5(); callback = 1.0); nothing; catch err; err; end
-    @test e isa MethodError && occursin("Callback or EventCallback", errtext(e))
+    @test e isa MethodError && occursin("not a member of `Callback`", errtext(e)) && occursin("not a member of `EventCallback`", errtext(e))
 end
 
 @testset "A problem type: gradients through Tsit5" begin
@@ -108,7 +108,7 @@ end
         @implement ODEProblemTrait BadRet
     end)
     @test e isa TraitWorld.ImplementError
-    @test occursin("`rhs!`", errtext(e)) && occursin("returns `Vector{Float64}`, declared `Nothing`", errtext(e))
+    @test occursin("rhs!'s method", errtext(e)) && occursin("infers its result as Vector{Float64}, wider than the declared Nothing", errtext(e))
     # (c) in the block form: the same check
     e = thrown(quote
         struct BlockBad; u0::Vector{Float64}; tspan::Tuple{Float64,Float64}; p::Float64; end
@@ -116,7 +116,7 @@ end
             rhs!(m, du, u, t) = (du .= -m.p .* u)
         end
     end)
-    @test e isa TraitWorld.ImplementError && occursin("declared `Nothing`", errtext(e))
+    @test e isa TraitWorld.ImplementError && occursin("the declared Nothing", errtext(e))
     # (c') a wrong argument type: refused, but the message does not name the declared signature
     e = thrown(quote
         struct BadArg; u0::Vector{Float64}; tspan::Tuple{Float64,Float64}; p::Float64; end

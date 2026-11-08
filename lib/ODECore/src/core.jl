@@ -83,7 +83,9 @@ end
     IntegratorView{U, T, P}
 
 What a callback sees of the integrator: the state `u::U` (its contents writable), the time `t::T`,
-the last step's size `dt::T`, the parameters `p::P` (by name: `ps[:σ]`, a `ParameterView{P}`), two flags, and three operations: `add_tstop!`
+the last step's size `dt::T`, the parameters `p::P` (by name: `ps[:σ]`, a `ParameterView{P}`), the problem's system
+(`HasSystem`: `getsystem(integ)`, SciML's `integ.f.sys`), its values and names (`ValueProvider{U, P}`,
+`IndexProvider{Symbol}`: `getu(integ, idx)(integ)`, `getstate(integ, :x)`), two flags, and three operations: `add_tstop!`
 (a time the solver must step to), `terminate!`, and `interp!(i, out, τ)`, the state at `τ` within
 the last accepted step by the solver's interpolant; `auto_dt_reset!`, the next step's size estimated again
 from the state (after a callback changed the state or the parameters), and `save_discretes!`, the
@@ -92,7 +94,7 @@ parameters saved at the current time into the solution (after a callback changed
 a callback reads `integ.p` at the problem's parameter type. The outer layer's `ParamIntegrator` conforms;
 it is also what `init` returns.
 """
-@trait IntegratorView{U, T, P} <: HasProperty{:ps, ParameterView{P}} begin
+@trait IntegratorView{U, T, P} <: (HasProperty{:ps, ParameterView{P}}, HasSystem, ValueProvider{U, P}, IndexProvider{Symbol}) begin
     @const u::U
     @const t::T
     @const dt::T
@@ -538,9 +540,12 @@ function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
 end
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
-# a bounded function: `prob` is a trait object, so the trait's defaults serve what the type does not implement
-core_problem(prob::ODEProblemTrait) =
-    CoreProblem(ProblemRHS(prob), prob.u0, prob.tspan, ProblemJac(prob), false)
+# the problem's own `rhs!` and `jacobian!`, kept `Dynamic` at the core's signatures (traits §7.7), so the core's
+# type names neither the problem's type nor its parameters. Open on purpose (traits §7.3): it stores the problem in
+# records whose parameter takes its type
+@open core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
+    CoreProblem(Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
+                Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false)
 
 """
     DiscreteCallback(condition, affect!; initialize = no_initialize)
@@ -828,14 +833,15 @@ end
 @implement Trajectory{Vector{T},Float64} ODESolution{T,P} where {T,P} begin
     times(s) = getfield(s, :t)
     state(s, k) = getfield(s, :u)[k]
-    at(s, τ) = dense_at(getfield(s, :interp), getfield(s, :t), getfield(s, :u), τ)
+    # asserted: a call at the field's abstract type is a run-time site, whose result is `Any` under facts (open issue 157)
+    at(s, τ) = dense_at(getfield(s, :interp), getfield(s, :t), getfield(s, :u), τ)::Vector{T}
 end
 "The state at `τ`: by the solver's interpolant, or linear between the saved states without one; `DomainError` outside the saved times."
 function dense_at(ip, ts::Vector{Float64}, us::Vector{Vector{E}}, τ::Float64) where {E}
     ip === nothing && return linear_at(ts, us, τ)
     (isempty(ts) || τ < ts[1] || τ > ts[end]) &&
         throw(DomainError(τ, "outside the saved times $(isempty(ts) ? "(none)" : (ts[1], ts[end]))"))
-    return interpolate(ip, τ)
+    return interpolate(ip, τ)::Vector{E}   # asserted: a run-time site's result is `Any` under facts (open issue 157)
 end
 """
     sol(τ; idxs = nothing)

@@ -40,21 +40,19 @@ end
 @testset "Compiled: a wrong signature is refused" begin
     oop(u, p, t) = -u                       # SciML's out-of-place form: no method at the declared arguments
     ret!(du, u, p, t) = (du .= -u)          # returns du, not nothing
-    # a `Dynamic` function made at another signature is the same function at the problem's: Dynamic there
-    @test solve(ODEProblem(Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u ==
+    # a `Dynamic` function at the problem's signature is kept as it is: the solver compiled once (traits §7.5, §7.7)
+    RS = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}
+    @test solve(ODEProblem(Dynamic{Callable{RS,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u ==
           solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5()).u
-    # a constructor never casts: a `compiled_for` function cannot be made a `Dynamic{Callable}`
-    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa TraitBoundError
-    # `Dynamic`: refused at the bound, where the kept function is seen at the core's signature: no method
-    # there, or one whose result cannot be the declared `Nothing` (TraitWorld, traits reference §6.5)
+    # a `Dynamic` at a signature the function has no method for is refused when made; a constructor takes no cast
+    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!)) isa TypeError
+    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa TypeError
+    # `Dynamic` (the default) and `Compiled` alike: a function with no method at the arguments fails at its first
+    # call; one whose result is not the declared `Nothing` fails the result's check (traits §9)
     for f in (oop, ret!)
         e = caught(() -> solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5()))
-        @test e isa TraitBoundError && occursin("Nothing", sprint(showerror, e))
-    end
-    # `Compiled`: the problem type for this function is a member of the problem family, checked at its
-    # first use and refused, naming `rhs!` at the declared arguments (TraitWorld, traits reference §4.7)
-    for f in (oop, ret!)
+        @test f === oop ? e isa MethodError : (e isa TypeError && occursin("nothing", lowercase(sprint(showerror, e))))
         e = caught(() -> solve(ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0), Tsit5()))
-        @test e isa ImplementError && occursin("does not conform", sprint(showerror, e)) && occursin("`rhs!` at Tuple{ODEProblem{Float64, Vector{Float64}", sprint(showerror, e))
+        @test f === oop ? e isa MethodError : e isa TypeError
     end
 end

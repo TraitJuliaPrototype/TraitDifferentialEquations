@@ -19,7 +19,9 @@
     pj = ODEProblem(ODEFunction(lorenz!; jac = jl!), U0, (0.0, 1.0), p)
     Jm = zeros(3, 3); jacobian!(remake(pj; p = p2), Jm, [1.0, 2.0, 3.0], 0.0)
     @test Jm ≈ [-10.0 10.0 0.0; 20.0-3.0 -1.0 -1.0; 2.0 1.0 -8/3]
-    pcj = ODEProblem(ODEFunction(compiled_for(lorenz!); jac = compiled_for(jl!)), U0, (0.0, 1.0), p)
+    # a record's functions at `Callable`'s default: a cast inside `ODEFunction` reaches neither it nor the problem
+    # (open issue 159; lowering L-56 refuses a cast in a call with keyword arguments)
+    pcj = ODEProblem(ODEFunction(lorenz!; jac = jl!), U0, (0.0, 1.0), p)
     rcj = remake(pcj; p = p2)
     @test typeof(rcj) === typeof(pcj) && solve(rcj, Rodas5()).u[end] ≈ solve(remake(pj; p = p2), Rodas5()).u[end]
     n = Ref(0)

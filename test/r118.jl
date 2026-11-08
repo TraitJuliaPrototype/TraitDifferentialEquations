@@ -19,7 +19,7 @@ end
 @implement IndexProvider{GIdx} Chain begin
     variable_index(m, x) = x isa Node ? x.i : nothing
     parameter_index(m, x) = x isa Gain ? 1 : nothing
-    observed(m, x) = x isa Flow ? Kept{Callable}((u, p, t) -> p[1] * (u[x.i + 1] - u[x.i])) : nothing
+    observed(m, x) = x isa Flow ? ((u, p, t) -> p[1] * (u[x.i + 1] - u[x.i])) : nothing
 end
 "The same model with vectors of indices as indices of its own: one getter for all of them."
 struct VChain
@@ -32,8 +32,8 @@ end
 @implement IndexProvider{Union{GIdx, Vector{Flow}}} VChain begin
     variable_index(m, x) = x isa Node ? x.i : nothing
     parameter_index(m, x) = x isa Gain ? 1 : nothing
-    observed(m, x) = x isa Flow ? Kept{Callable}((u, p, t) -> p[1] * (u[x.i + 1] - u[x.i])) :
-                     x isa Vector{Flow} ? Kept{Callable}((u, p, t) -> [p[1] * (u[f.i + 1] - u[f.i]) for f in x]) : nothing
+    observed(m, x) = x isa Flow ? ((u, p, t) -> p[1] * (u[x.i + 1] - u[x.i])) :
+                     x isa Vector{Flow} ? ((u, p, t) -> [p[1] * (u[f.i + 1] - u[f.i]) for f in x]) : nothing
 end
 
 const U3 = [1.0, 2.0, 4.0]

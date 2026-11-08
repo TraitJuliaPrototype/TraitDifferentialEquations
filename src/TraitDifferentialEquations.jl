@@ -22,7 +22,7 @@ using TraitNonlinearSolve: NonlinearProblemTrait, residual!, nl_jacobian!, Nonli
 using TraitIndexing                  # symbolic access (move 4)
 using TraitArrayTools: DiffEqArray, plotpoints   # the solution as a trajectory (move 5)
 using ODECore: RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FunctionCallback, solve_ode, init_ode, SolverOptions, FDual,
-                no_jacobian, UserFunction, ODEAlgorithm, solve_core, getseries
+                no_jacobian, UserFunction, ODEAlgorithm, solve_core, getseries, solve!
 export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rodas5, ODEAlgorithm, ODEStepper, solve_core,
        LinearSolver, linfactor, DenseLU,
        SymbolCache, IndexProvider, ValueProvider, SeriesProvider, variable_index, parameter_index, observed, getu, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,

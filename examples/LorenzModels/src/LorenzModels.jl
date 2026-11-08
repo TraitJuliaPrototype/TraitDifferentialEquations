@@ -15,8 +15,9 @@ using TraitDifferentialEquations
 export LorenzProblem, LorenzParams, Bounce, RaiseSigma
 
 "The problem types and callbacks, as trait-world code."
-@trait_module module Models
+module Models
 using TraitWorld
+@trait_module
 using TraitDifferentialEquations
 import TraitDifferentialEquations: rhs!, jacobian!, condition, affect!
 export LorenzProblem, LorenzParams, Bounce, RaiseSigma
@@ -102,7 +103,8 @@ end
 end
 using .Models
 
-TraitWorld.@workload begin
+if ccall(:jl_generating_output, Cint, ()) == 1   # a precompile workload, run while the package image is built
+    let
     u0 = [1.0, 0.0, 0.0]
     prob = LorenzProblem(u0, (0.0, 0.1), 10.0, 28.0, 8 / 3)
     solve(prob, Tsit5())
@@ -111,6 +113,7 @@ TraitWorld.@workload begin
     solve(LorenzProblem(u0, (0.0, 0.1), 10.0, 28.0, 8 / 3), Rodas5(); callback = Bounce(10.0))
     # gradients through Tsit5 for three parameters (chunk 3): every loss of this signature runs this code
     gradient(p -> sum(solve(LorenzProblem(eltype(p).(u0), (0.0, 0.1), p[1], p[2], p[3]), Tsit5()).u[end]), [10.0, 28.0, 8 / 3])
+    end
 end
 
 end

@@ -153,8 +153,8 @@ end
     @test typeof(init(prob, Tsit5())) === typeof(init(prob, Rodas5(); callback = kick)) ===
           typeof(init(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), Rodas5(chunk_size = 0)))
     # an algorithm that cannot be stepped is refused by init
-    @test conforms(Tsit5, ODEStepper) && conforms(typeof(Rodas5()), ODEStepper) && !conforms(OnlySolve, ODEStepper)
+    @test Tsit5 <: ODEStepper && typeof(Rodas5()) <: ODEStepper && !(OnlySolve <: ODEStepper)
     @test solve(prob, OnlySolve()).u == solve(prob, Tsit5()).u
     e = caught(() -> init(prob, OnlySolve()))
-    @test e isa TraitBoundError && occursin("ODEStepper", sprint(showerror, e))
+    @test e isa MethodError && occursin("ODEStepper", sprint(showerror, e))
 end
