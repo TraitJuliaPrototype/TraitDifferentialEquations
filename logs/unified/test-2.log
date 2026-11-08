@@ -1,0 +1,117 @@
+     Testing TraitDifferentialEquations
+      Status `/tmp/jl_yenWD5/Project.toml`
+  [f6369f11] ForwardDiff v1.4.7
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [37e2e46d] LinearAlgebra v1.13.0
+  [8dfed614] Test v1.11.0
+      Status `/tmp/jl_yenWD5/Manifest.toml`
+  [bbf7d656] CommonSubexpressions v0.3.1
+  [163ba53b] DiffResults v1.1.0
+  [b552c78f] DiffRules v1.16.0
+  [ffbed154] DocStringExtensions v0.10.2
+  [f6369f11] ForwardDiff v1.4.7
+  [92d709cd] IrrationalConstants v0.2.7
+  [692b3bcd] JLLWrappers v1.8.0
+  [2ab3a3ac] LogExpFunctions v1.0.3
+  [1914dd2f] MacroTools v0.5.16
+  [77ba4419] NaNMath v1.1.5
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [21216c6a] Preferences v1.6.1
+  [276daf66] SpecialFunctions v2.9.1
+⌃ [1e83bf80] StaticArraysCore v1.4.4
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [efe28fd5] OpenSpecFun_jll v0.5.6+0
+  [56f22d72] Artifacts v1.11.0
+  [2a0f44e3] Base64 v1.11.0
+  [ade2ca70] Dates v1.11.0
+  [b77e0a4c] InteractiveUtils v1.11.0
+  [ac6e5ff7] JuliaSyntaxHighlighting v1.12.0
+  [8f399da3] Libdl v1.11.0
+  [37e2e46d] LinearAlgebra v1.13.0
+  [56ddb016] Logging v1.11.0
+  [d6f4376e] Markdown v1.11.0
+  [de0858da] Printf v1.11.0
+  [9a3f8284] Random v1.11.0
+  [ea8e919c] SHA v1.0.0
+  [9e88b42a] Serialization v1.11.0
+  [f489334b] StyledStrings v1.11.0
+  [fa267f1f] TOML v1.0.3
+  [8dfed614] Test v1.11.0
+  [4ec0a83e] Unicode v1.11.0
+  [e66e0078] CompilerSupportLibraries_jll v1.5.5+2
+  [4536629a] OpenBLAS_jll v0.3.30+0
+  [05823500] OpenLibm_jll v0.8.7+0
+  [8e850b90] libblastrampoline_jll v5.15.0+0
+        Info Packages marked with ⌃ have new versions available and may be upgradable.
+     Testing Running tests...
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+ERROR: LoadError: Some tests did not pass: 4 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:25
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/runtests.jl:115
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  3.3s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  2.7s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.7s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  1.4s
+
+A problem type with its own cache (LorenzModels): Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:42
+  Expression: isconcretetype(I1) && (!(occursin("LorenzParams", string(I1))) && !(occursin("LorenzProblem", string(I1))))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:26
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:42 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                                    | Pass  Fail  Total  Time
+A problem type with its own cache (LorenzModels) |    4     1      5  2.6s
+RNG of the outermost testset: Random.Xoshiro(0x0566bf1fc8615f4f, 0xa5ddaf8a043a5115, 0x4a5ad522d7b13722, 0xb1adbcf0c5cbbb7b, 0x4686220174188695)
+ERROR: Package TraitDifferentialEquations errored during testing
+Stacktrace:
+  [1] pkgerror(msg::String)
+    @ Pkg.Types /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Types.jl:68
+  [2] test(ctx::Pkg.Types.Context, pkgs::Vector{PackageSpec}; coverage::Bool, julia_args::Cmd, test_args::Cmd, test_fn::Nothing, force_latest_compatible_version::Bool, allow_earlier_backwards_compatible_versions::Bool, allow_reresolve::Bool)
+    @ Pkg.Operations /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:3319
+  [3] test
+    @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:3197 [inlined]
+  [4] test(ctx::Pkg.Types.Context, pkgs::Vector{PackageSpec}; coverage::Bool, test_fn::Nothing, julia_args::Cmd, test_args::Cmd, force_latest_compatible_version::Bool, allow_earlier_backwards_compatible_versions::Bool, allow_reresolve::Bool, kwargs::@Kwargs{io::IOContext{IO}})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:587
+  [5] test(pkgs::Vector{PackageSpec}; io::IOContext{IO}, kwargs::@Kwargs{})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:172
+  [6] test(pkgs::Vector{PackageSpec})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:161
+  [7] test(; name::Nothing, uuid::Nothing, version::Nothing, url::Nothing, rev::Nothing, path::Nothing, mode::PackageMode, subdir::Nothing, kwargs::@Kwargs{})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:189
+  [8] test()
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:178
+  [9] top-level scope
+    @ none:1
+ [10] eval(m::Module, e::Any)
+    @ Core ./boot.jl:517
+ [11] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:310
+ [12] _start()
+    @ Base ./client.jl:577
+exit 1

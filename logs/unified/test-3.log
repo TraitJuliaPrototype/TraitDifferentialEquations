@@ -1,0 +1,73 @@
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+
+  4 dependencies had output during precompilation:
+┌ TraitRodas
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+└  
+┌ ODECore
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+└  
+┌ TraitNonlinearSolve
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+│  WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+└  
+┌ TraitDifferentialEquations
+│  [Output was shown above]
+└  
+ERROR: LoadError: Some tests did not pass: 7 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:45
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/runtests.jl:115
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  3.4s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  2.8s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.7s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  1.4s
+Test Summary:                                    | Pass  Total  Time
+A problem type with its own cache (LorenzModels) |    5      5  0.9s
+
+Callback types (Bounce, RaiseSigma): Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:70
+  Expression: e isa MethodError && occursin("Callback or EventCallback", errtext(e))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:46
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:70 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                       | Pass  Fail  Total  Time
+Callback types (Bounce, RaiseSigma) |    7     1      8  3.5s
+RNG of the outermost testset: Random.Xoshiro(0x68b8c81aef9b373c, 0xa3f0629b507d7d21, 0xf295dd7435cd8b58, 0x22ba1c2c5c26653b, 0x048e086873242bf4)

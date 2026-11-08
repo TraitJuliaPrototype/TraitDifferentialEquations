@@ -2,6 +2,23 @@
 
 ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
 
+## On the unified build (branch `unified`, W-104)
+
+This branch follows the design under "traits are abstract types" on Julia's unified build (`julia-unified`, branch `unified`), with TraitWorld's branch `unified`. The sections below describe the earlier build (branches `w34`, `w96`).
+
+- **How to run:** `../julia-unified/julia --project=. -e 'using Pkg; Pkg.test()'` (offline: `JULIA_PKG_OFFLINE=true`).
+- **What changed:** `@trait_module` before a module's first method; intersections as `All{…}`; a kept value is the value itself, stored with `keep`; `Dynamic{X}` where code is compiled once (a callback's view of the integrator, a problem's function); `Solvable` by `ldiv!`; the workloads run while the images are built.
+  - `ODEProblem(f, u0, tspan, p)` takes `f` as a trait argument, `Callable{RHSSig{P, T}, Nothing}` with `T` and `P` from `u0` and `p`, and keeps it (traits §8.2): a cast at that call decides. A function inside an `ODEFunction` or a callback takes `Callable`'s default, `Dynamic` (open issue 159).
+  - A function whose Jacobian is by duals is kept at both signatures, `Dynamic{All{Callable{CoreRHSSig{T}, Nothing}, Callable{CoreDualSig{8}, Nothing}}}`; the methods that call it at the duals are `@open`.
+  - `IntegratorView{U, T, P} <: (HasProperty{:ps, ParameterView{P}}, HasSystem, ValueProvider{U, P}, IndexProvider{Symbol})`: a callback's `Dynamic` view reads the parameters by name (`integ.ps[:σ]`, the integrator's own `getproperty`, C-32), the system, the values and the names.
+- **Known gaps:** the default `Dynamic` at `ODEProblem(f, …)` is `Compiled` today, since an argument whose set names the method's variables is compiled per type (compiler C-54): three checks are `@test_broken`. A cast inside `ODEFunction` is refused by lowering (L-56) and would not reach the problem (open issue 159). The solution's `at` asserts its result at two run-time sites (open issue 157). The ambiguity report warns for `_read` at `ODESolution`, a family member of both `ValueProvider` and `SeriesProvider` (compiler C-29).
+
+Tests on the unified build (dated):
+
+| Date | Build | Result | Log |
+|---|---|---|---|
+| 2026-11-08 | `unified` 350c5b1c59, TraitWorld d897223 | 32 testsets pass, 3 checks broken (C-54) | `logs/unified/test-9.log` (each file run on its own), `logs/unified/test-final.log` (`Pkg.test`) |
+
 Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 711484a23e with TraitWorld (the commit in this repository's log). A problem is any type that implements `ODEProblemTrait`; TDE's own `ODEProblem` is the canonical one; `solve(prob, alg)` is the one entry point. The test suite passes; the scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3. This file keeps its own dated results below: "Checked in W-2", "Measured in session 29", and the numbers of sessions 23–27 under "History (before the facts compiler)".
 
 **How it is built (keys):**

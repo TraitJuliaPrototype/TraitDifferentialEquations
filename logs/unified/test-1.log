@@ -1,0 +1,265 @@
+     Testing TraitDifferentialEquations
+      Status `/tmp/jl_HbAQ20/Project.toml`
+  [f6369f11] ForwardDiff v1.4.7
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [37e2e46d] LinearAlgebra v1.13.0
+  [8dfed614] Test v1.11.0
+      Status `/tmp/jl_HbAQ20/Manifest.toml`
+  [bbf7d656] CommonSubexpressions v0.3.1
+  [163ba53b] DiffResults v1.1.0
+  [b552c78f] DiffRules v1.16.0
+  [ffbed154] DocStringExtensions v0.10.2
+  [f6369f11] ForwardDiff v1.4.7
+  [92d709cd] IrrationalConstants v0.2.7
+  [692b3bcd] JLLWrappers v1.8.0
+  [2ab3a3ac] LogExpFunctions v1.0.3
+  [1914dd2f] MacroTools v0.5.16
+  [77ba4419] NaNMath v1.1.5
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [21216c6a] Preferences v1.6.1
+  [276daf66] SpecialFunctions v2.9.1
+⌃ [1e83bf80] StaticArraysCore v1.4.4
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [efe28fd5] OpenSpecFun_jll v0.5.6+0
+  [56f22d72] Artifacts v1.11.0
+  [2a0f44e3] Base64 v1.11.0
+  [ade2ca70] Dates v1.11.0
+  [b77e0a4c] InteractiveUtils v1.11.0
+  [ac6e5ff7] JuliaSyntaxHighlighting v1.12.0
+  [8f399da3] Libdl v1.11.0
+  [37e2e46d] LinearAlgebra v1.13.0
+  [56ddb016] Logging v1.11.0
+  [d6f4376e] Markdown v1.11.0
+  [de0858da] Printf v1.11.0
+  [9a3f8284] Random v1.11.0
+  [ea8e919c] SHA v1.0.0
+  [9e88b42a] Serialization v1.11.0
+  [f489334b] StyledStrings v1.11.0
+  [fa267f1f] TOML v1.0.3
+  [8dfed614] Test v1.11.0
+  [4ec0a83e] Unicode v1.11.0
+  [e66e0078] CompilerSupportLibraries_jll v1.5.5+2
+  [4536629a] OpenBLAS_jll v0.3.30+0
+  [05823500] OpenLibm_jll v0.8.7+0
+  [8e850b90] libblastrampoline_jll v5.15.0+0
+        Info Packages marked with ⌃ have new versions available and may be upgradable.
+     Testing Running tests...
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+ERROR: LoadError: @trait_module: an option is facts, bounded, no_pirates, dynamic or first_seen = true or false; got module Models
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:18 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:19 =#
+using TraitWorld
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:20 =#
+using TraitDifferentialEquations
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:21 =#
+import TraitDifferentialEquations: rhs!, jacobian!, condition, affect!
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:22 =#
+export LorenzProblem, LorenzParams, Bounce, RaiseSigma
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:24 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:24 =# Core.@doc "The Lorenz system's parameters, at the element type `T`. Mutable, so that a callback can change one." mutable struct LorenzParams{T}
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:26 =#
+        σ::T
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:27 =#
+        ρ::T
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:28 =#
+        β::T
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:31 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:31 =# Core.@doc "    LorenzProblem(u0, tspan, σ, ρ, β)\n\nThe Lorenz system as a problem type: its initial state, time span and parameters, and its own work\nbuffer, all at the element type `T`: `Float64`, `Float32`, or dual numbers when a loss builds the\nproblem from its parameters under `gradient`.\n" struct LorenzProblem{T}
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:39 =#
+        u0::Vector{T}
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:40 =#
+        tspan::Tuple{Float64, Float64}
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:41 =#
+        p::LorenzParams{T}
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:42 =#
+        cache::Vector{T}
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:44 =#
+(LorenzProblem(u0::Vector{T}, tspan, σ, ρ, β) where T) = begin
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:44 =#
+        LorenzProblem{T}(u0, (Float64(tspan[1]), Float64(tspan[2])), LorenzParams{T}(σ, ρ, β), zeros(T, 3))
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:47 =#
+function rhs!(m::LorenzProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where T
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:47 =#
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:48 =#
+    (c, p) = (m.cache, m.p)
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:49 =#
+    c .= u
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:50 =#
+    du[1] = p.σ * (c[2] - c[1])
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:51 =#
+    du[2] = c[1] * (p.ρ - c[3]) - c[2]
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:52 =#
+    du[3] = c[1] * c[2] - p.β * c[3]
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:53 =#
+    return nothing
+end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:56 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:56 =# Core.@doc "The Jacobian in `u`, by hand: Rodas5 calls it instead of the trait's default (finite differences)." function jacobian!(m::LorenzProblem{T}, J::Matrix{T}, u::Vector{T}, t::Float64) where T
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:57 =#
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:58 =#
+        p = m.p
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:59 =#
+        J[1, 1] = -(p.σ)
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:59 =#
+        J[1, 2] = p.σ
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:59 =#
+        J[1, 3] = zero(T)
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:60 =#
+        J[2, 1] = p.ρ - u[3]
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:60 =#
+        J[2, 2] = -(one(T))
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:60 =#
+        J[2, 3] = -(u[1])
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:61 =#
+        J[3, 1] = u[2]
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:61 =#
+        J[3, 2] = u[1]
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:61 =#
+        J[3, 3] = -(p.β)
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:62 =#
+        return nothing
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:64 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:64 =# @implement ODEProblemTrait{T, LorenzParams{T}} LorenzProblem{T} where T
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:66 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:66 =# Core.@doc "The integrator as Lorenz problems' callbacks see it: `integ.p` is the problem's `LorenzParams{Float64}`." const LorenzView = Dynamic{IntegratorView{Vector{Float64}, Float64, LorenzParams{Float64}}}
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:69 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:69 =# Core.@doc "    Bounce(wall)\n\nA wall at `x = wall`: a state past it is reflected back (a callback that writes the state).\n" struct Bounce
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:75 =#
+        wall::Float64
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:77 =#
+condition(cb::Bounce, u::Vector{Float64}, t::Float64, integ::LorenzView) = begin
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:77 =#
+        u[1] > cb.wall
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:78 =#
+function affect!(cb::Bounce, integ::LorenzView)
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:78 =#
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:79 =#
+    u = integ.u
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:80 =#
+    u[1] = 2 * cb.wall - u[1]
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:81 =#
+    return nothing
+end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:83 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:83 =# @implement Callback{Vector{Float64}, Float64, LorenzParams{Float64}} Bounce
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:85 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:85 =# Core.@doc "    RaiseSigma(at, σ)\n\nFrom time `at` on, the problem's σ is `σ` (a callback that writes a parameter: the integrator's `p`\nis the problem's parameters, read at their type, `LorenzParams{Float64}`).\n" struct RaiseSigma
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:92 =#
+        at::Float64
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:93 =#
+        σ::Float64
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:95 =#
+condition(cb::RaiseSigma, u::Vector{Float64}, t::Float64, integ::LorenzView) = begin
+        #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:95 =#
+        t >= cb.at && integ.p.σ != cb.σ
+    end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:96 =#
+function affect!(cb::RaiseSigma, integ::LorenzView)
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:96 =#
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:97 =#
+    integ.p.σ = cb.σ
+    #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:98 =#
+    return nothing
+end
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:100 =#
+#= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:100 =# @implement Callback{Vector{Float64}, Float64, LorenzParams{Float64}} RaiseSigma
+end
+Stacktrace:
+   [1] error(s::String)
+     @ Base ./error.jl:44
+   [2] var"@trait_module"(__source__::LineNumberNode, __module__::Module, opts::Vararg{Any})
+     @ TraitWorld /p/projects/coen/julia-trait-bound/TraitWorld-unified/src/scope.jl:20
+   [3] #macroexpand#22
+     @ ./expr.jl:206 [inlined]
+   [4] macroexpand
+     @ ./expr.jl:205 [inlined]
+ ┌ [5] docm
+ │   @ ./docs/Docs.jl:692 [inlined]
+ ╰──── repeated 2 times
+   [7] template_hook(::LineNumberNode, ::Module, ::String, ::Expr)
+     @ DocStringExtensions /p/projects/coen/julia-trait-bound/.julia-depot/packages/DocStringExtensions/azBTp/src/hook.jl:24
+   [8] var"@doc"(__source__::LineNumberNode, __module__::Module, x::Vararg{Any})
+     @ Core ./boot.jl:796
+   [9] fl_lower(ex::Expr, mod::Module, filename::String, lineno::UInt64, world::UInt64, warn::Bool)
+     @ Base ./flfrontend.jl:24
+  [10] include(mapexpr::Function, mod::Module, _path::String)
+     @ Base ./Base.jl:311
+  [11] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:20
+  [12] include(mapexpr::Function, mod::Module, _path::String)
+     @ Base ./Base.jl:311
+  [13] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/runtests.jl:115
+  [14] include(mapexpr::Function, mod::Module, _path::String)
+     @ Base ./Base.jl:311
+  [15] top-level scope
+     @ none:6
+  [16] eval(m::Module, e::Any)
+     @ Core ./boot.jl:517
+  [17] exec_options(opts::Base.JLOptions)
+     @ Base ./client.jl:310
+  [18] _start()
+     @ Base ./client.jl:577
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:17
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/examples/LorenzModels/src/LorenzModels.jl:1
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:20
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/runtests.jl:115
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  3.4s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  2.7s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.7s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  1.4s
+ERROR: Package TraitDifferentialEquations errored during testing
+Stacktrace:
+  [1] pkgerror(msg::String)
+    @ Pkg.Types /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Types.jl:68
+  [2] test(ctx::Pkg.Types.Context, pkgs::Vector{PackageSpec}; coverage::Bool, julia_args::Cmd, test_args::Cmd, test_fn::Nothing, force_latest_compatible_version::Bool, allow_earlier_backwards_compatible_versions::Bool, allow_reresolve::Bool)
+    @ Pkg.Operations /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:3319
+  [3] test
+    @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:3197 [inlined]
+  [4] test(ctx::Pkg.Types.Context, pkgs::Vector{PackageSpec}; coverage::Bool, test_fn::Nothing, julia_args::Cmd, test_args::Cmd, force_latest_compatible_version::Bool, allow_earlier_backwards_compatible_versions::Bool, allow_reresolve::Bool, kwargs::@Kwargs{io::IOContext{IO}})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:587
+  [5] test(pkgs::Vector{PackageSpec}; io::IOContext{IO}, kwargs::@Kwargs{})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:172
+  [6] test(pkgs::Vector{PackageSpec})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:161
+  [7] test(; name::Nothing, uuid::Nothing, version::Nothing, url::Nothing, rev::Nothing, path::Nothing, mode::PackageMode, subdir::Nothing, kwargs::@Kwargs{})
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:189
+  [8] test()
+    @ Pkg.API /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:178
+  [9] top-level scope
+    @ none:1
+ [10] eval(m::Module, e::Any)
+    @ Core ./boot.jl:517
+ [11] exec_options(opts::Base.JLOptions)
+    @ Base ./client.jl:310
+ [12] _start()
+    @ Base ./client.jl:577
+exit 1

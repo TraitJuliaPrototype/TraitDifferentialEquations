@@ -1,0 +1,475 @@
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  3.3s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  2.8s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.7s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  1.4s
+Test Summary:                                    | Pass  Total  Time
+A problem type with its own cache (LorenzModels) |    5      5  0.8s
+Test Summary:                       | Pass  Total  Time
+Callback types (Bounce, RaiseSigma) |    8      8  2.6s
+Test Summary:                           | Pass  Total  Time
+A problem type: gradients through Tsit5 |    3      3  1.4s
+
+A problem type: errors at the conformance: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:111
+  Expression: occursin("`rhs!`", errtext(e)) && occursin("returns `Vector{Float64}`, declared `Nothing`", errtext(e))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:91
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:111 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+A problem type: errors at the conformance: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:119
+  Expression: e isa TraitWorld.ImplementError && occursin("declared `Nothing`", errtext(e))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:91
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:119 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                             | Pass  Fail  Total  Time
+A problem type: errors at the conformance |    8     2     10  1.9s
+RNG of the outermost testset: Random.Xoshiro(0x1631f57daea5158d, 0x1ccca898a3009031, 0x65f567938e372162, 0xfaf896ed339dd14c, 0x472f15a5c80b261e)
+FILE FAILED: routea.jl: LoadError: Some tests did not pass: 8 passed, 2 failed, 0 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/routea.jl:89
+Test Summary:                                         | Pass  Total  Time
+Compiled: a right-hand side with a declared signature |    9      9  1.7s
+
+Compiled: a wrong signature is refused: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:44
+  Test threw exception
+  Expression: (solve(ODEProblem(Dynamic{Callable{Tuple{Vector{Float64}}, Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5())).u == (solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5())).u
+  TypeError: in Dynamic, expected Callable{Tuple{Vector{Float64}}, Nothing}, got a value of type typeof(lorenz!)
+  Stacktrace:
+   [1] Dynamic{Callable{Tuple{Vector{Float64}}, Nothing}}(x::Any)
+     @ Core ./boot.jl:450
+   [2] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:44 [inlined]
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+Compiled: a wrong signature is refused: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:47
+  Test threw exception
+  Expression: caught((()->begin
+                #= /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:47 =#
+                Dynamic{Callable{Tuple{Vector{Float64}}, Nothing}}(compiled_for(lorenz!))
+            end)) isa TraitBoundError
+  UndefVarError: `TraitBoundError` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:47 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+Compiled: a wrong signature is refused: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52
+  Test threw exception
+  Expression: e isa TraitBoundError && occursin("Nothing", sprint(showerror, e))
+  UndefVarError: `TraitBoundError` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52 [inlined]
+
+Compiled: a wrong signature is refused: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52
+  Test threw exception
+  Expression: e isa TraitBoundError && occursin("Nothing", sprint(showerror, e))
+  UndefVarError: `TraitBoundError` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:52 [inlined]
+
+Compiled: a wrong signature is refused: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:58
+  Expression: e isa ImplementError && (occursin("does not conform", sprint(showerror, e)) && occursin("`rhs!` at Tuple{ODEProblem{Float64, Vector{Float64}", sprint(showerror, e)))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:58 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+Compiled: a wrong signature is refused: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:58
+  Expression: e isa ImplementError && (occursin("does not conform", sprint(showerror, e)) && occursin("`rhs!` at Tuple{ODEProblem{Float64, Vector{Float64}", sprint(showerror, e)))
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:41
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:58 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                          | Fail  Error  Total  Time
+Compiled: a wrong signature is refused |    2      4      6  1.4s
+RNG of the outermost testset: Random.Xoshiro(0x1631f57daea5158d, 0x1ccca898a3009031, 0x65f567938e372162, 0xfaf896ed339dd14c, 0x472f15a5c80b261e)
+FILE FAILED: compiledcall.jl: LoadError: Some tests did not pass: 0 passed, 2 failed, 4 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/compiledcall.jl:40
+
+W-34: ODEFunction, a given Jacobian, the chunk at init: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:16
+  Expression: typeof(ODEProblem(ODEFunction(lorenz!), U0, (0.0, 1.0), P0)) === typeof(prob)
+   Evaluated: ODEProblem{Float64, Vector{Float64}, Dynamic{All{Callable{Tuple{Vector{Float64}, Vector{Float64}, Float64}, Nothing}, Callable{Tuple{Vector{ForwardDiff.Dual{ODECore.ODETag, Float64, 8}}, Vector{ForwardDiff.Dual{ODECore.ODETag, Float64, 8}}, Float64}, Nothing}}}, typeof(ODECore.core_no_jacobian)} === ODEProblem{Float64, Vector{Float64}, ODECore.PartialFn{typeof(lorenz!), Vector{Float64}}, typeof(ODECore.core_no_jacobian)}
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:14
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:16 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+W-34: ODEFunction, a given Jacobian, the chunk at init: Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:23
+  Expression: rhs_function(pj) === nothing && (rhs_function(prob) isa TraitDifferentialEquations.ODECore.PartialFn && (rhs_function(prob)).f === lorenz!)
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:14
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:23 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+
+W-34: ODEFunction, a given Jacobian, the chunk at init: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:28
+  Test threw exception
+  Expression: e isa TraitBoundError && occursin("Nothing", sprint(showerror, e))
+  UndefVarError: `TraitBoundError` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:14
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:28 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:28 [inlined]
+Test Summary:                                          | Pass  Fail  Error  Total  Time
+W-34: ODEFunction, a given Jacobian, the chunk at init |    7     2      1     10  1.7s
+RNG of the outermost testset: Random.Xoshiro(0x1631f57daea5158d, 0x1ccca898a3009031, 0x65f567938e372162, 0xfaf896ed339dd14c, 0x472f15a5c80b261e)
+FILE FAILED: w34.jl: LoadError: Some tests did not pass: 7 passed, 2 failed, 1 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/w34.jl:13
+Test Summary:                                                                   | Pass  Total  Time
+W-34 move 2: callbacks at the problem's types, the integrator view's operations |   11     11  3.7s
+Test Summary:                                                    | Pass  Total  Time
+R2: optional properties of a problem's function (open issue 119) |   11     11  2.0s
+
+R2: the system object back (census item 12): Test Failed at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r2.jl:60
+  Expression: getsystem(prob) === m && (getsystem(sol) === m && seen == [m])
+  Stacktrace:
+   [1] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r2.jl:55
+   [2] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [3] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r2.jl:60 [inlined]
+   [4] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:758 [inlined]
+Test Summary:                               | Pass  Fail  Total  Time
+R2: the system object back (census item 12) |    4     1      5  0.5s
+RNG of the outermost testset: Random.Xoshiro(0x1631f57daea5158d, 0x1ccca898a3009031, 0x65f567938e372162, 0xfaf896ed339dd14c, 0x472f15a5c80b261e)
+FILE FAILED: r2.jl: LoadError: Some tests did not pass: 4 passed, 1 failed, 0 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r2.jl:54
+Test Summary:                       | Pass  Total  Time
+Nonlinear problems (census item 11) |   19     19  2.0s
+Test Summary:                      | Pass  Total  Time
+Steady states (SteadyStateProblem) |    5      5  1.0s
+FILE FAILED: r3.jl: LoadError: syntax: a cast in a call with keyword arguments or a splatted argument is not supported yet around /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r3.jl:22
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r3.jl
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:46
+  Test threw exception
+  Expression: (getu(m, Flow(2)))(U3, [0.5], 0.0) == 1.0 && (getu(m, [Node(1), Flow(1)]))(U3, [0.5], 0.0) == [1.0, 0.5]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] getu(x::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [4] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [6] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:46 [inlined]
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [8] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:46 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:51
+  Test threw exception
+  Expression: (getu(s, Flow(1)))(s) == [flow(u, [0.5], 1) for u = s.u]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [4] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [6] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:51 [inlined]
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:52
+  Test threw exception
+  Expression: (getu(s, [Flow(1), Node(2)]))(s) == [[flow(u, [0.5], 1), u[2]] for u = s.u]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] _getter_other(ip::Chain, idx::Vector{GIdx})
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:141
+   [4] getter(ip::Chain, idx::Vector{GIdx})
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:128
+   [5] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Vector{GIdx})
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [6] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [8] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:52 [inlined]
+   [9] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:55
+  Test threw exception
+  Expression: s2(0.3; idxs = Flow(2)) == flow(s2(0.3), [0.5], 2) && s2(0.3; idxs = Node(1)) == (s2(0.3))[1]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+    [1] observed(m::Chain, x::Flow)
+      @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+    [2] getter(ip::Chain, idx::Flow)
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+    [3] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Flow)
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+    [4] (::ODESolution{Float64, Vector{Float64}})(τ::Float64, idx::Flow)
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:864
+    [5] #_#6
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:854 [inlined]
+    [6] top-level scope
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+    [7] macro expansion
+      @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+    [8] macro expansion
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:55 [inlined]
+    [9] macro expansion
+      @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [10] macro expansion
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:55 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:57
+  Test threw exception
+  Expression: s2([0.3, 0.6]; idxs = [Node(1), Flow(1)]) == [[(s2(τ))[1], flow(s2(τ), [0.5], 1)] for τ = (0.3, 0.6)]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+    [1] observed(m::Chain, x::Flow)
+      @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+    [2] getter(ip::Chain, idx::Flow)
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+    [3] _getter_other(ip::Chain, idx::Vector{GIdx})
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:141
+    [4] getter(ip::Chain, idx::Vector{GIdx})
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:128
+    [5] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Vector{GIdx})
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+    [6] _values_at(s::ODESolution{Float64, Vector{Float64}}, τs::Vector{Float64}, idx::Vector{GIdx})
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:869
+    [7] #_#7
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:855 [inlined]
+    [8] top-level scope
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+    [9] macro expansion
+      @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [10] macro expansion
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:57 [inlined]
+   [11] macro expansion
+      @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:65
+  Test threw exception
+  Expression: (getu(sc, Gain()))(sc) == [0.5, 2.0, 2.0, 2.0] && (getu(sc, Flow(1)))(sc) == [flow(sc.u[1], [0.5], 1); [flow(sc.u[k], [2.0], 1) for k = 2:4]]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [4] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [6] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:65 [inlined]
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [8] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:65 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:67
+  Test threw exception
+  Expression: sc(0.75; idxs = Flow(1)) == flow(sc(0.75), [2.0], 1)
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] getu(x::ODESolution{Float64, Vector{Float64}}, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [4] (::ODESolution{Float64, Vector{Float64}})(τ::Float64, idx::Flow)
+     @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:864
+   [5] #_#6
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:854 [inlined]
+   [6] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [8] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:67 [inlined]
+   [9] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:71
+  Test threw exception
+  Expression: (getu(integ, Flow(2)))(integ) == flow(integ.u, [0.5], 2) && (getu(integ, Node(1)))(integ) == integ.u[1]
+  UndefVarError: `Kept` not defined in `Main`
+  Suggestion: check for spelling errors or missing imports.
+  Stacktrace:
+   [1] observed(m::Chain, x::Flow)
+     @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:22
+   [2] getter(ip::Chain, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:133
+   [3] getu(x::ODECore.ParamIntegrator{Vector{Float64}, Float64, Vector{Float64}}, idx::Flow)
+     @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+   [4] top-level scope
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [5] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [6] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:71 [inlined]
+   [7] macro expansion
+     @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:755 [inlined]
+   [8] macro expansion
+     @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:71 [inlined]
+
+open issue 118: a system's own indices: Error During Test at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:42
+  Got exception outside of a @test
+  ArgumentError: a value of type Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}} provides no indices (`IndexProvider`): no getter for Flow(1)
+  Stacktrace:
+    [1] getter(x::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}}, idx::Flow)
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:147
+    [2] getu(x::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}}, idx::Flow)
+      @ TraitIndexing /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing/src/TraitIndexing.jl:188
+    [3] (::var"#226#227"{Vector{Float64}})(i::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}})
+      @ Main /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:73
+    [4] affect!(cb::ODECore.FunctionCallback{Vector{Float64}, Float64, Vector{Float64}}, integ::Dynamic{IntegratorView{Vector{Float64}, Float64, Vector{Float64}}})
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:588
+    [5] step_affect!(c::ODECore.ParamCallback{Vector{Float64}, Float64, Vector{Float64}}, sv::Dynamic{ODECore.StepView{Vector{Float64}, Float64}})
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:710
+    [6] tsit5_advance!(i::ODECore.Tsit5Integrator{Float64, ODECore.CoreProblem{Float64, ODECore.PartialFn{Chain, Vector{Float64}}, typeof(ODECore.core_no_jacobian)}})
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:1536
+    [7] advance!
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:1094 [inlined]
+    [8] run_to_end!
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:947 [inlined]
+    [9] solve_core(a::Tsit5, m::ODECore.CoreProblem{Float64, ODECore.PartialFn{Chain, Vector{Float64}}, typeof(ODECore.core_no_jacobian)}, callbacks::Vector{Any}, opts::ODECore.SolverOptions)
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:1326
+   [10] solve_ode(prob::Any, alg::ODEAlgorithm, callbacks::Vector{Any}, opts::ODECore.SolverOptions)
+      @ ODECore /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore/src/core.jl:1251
+   [11] _solve
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/src/TraitDifferentialEquations.jl:70 [inlined]
+   [12] solve(prob::Any, alg::Any; callback::Any, kw::@Kwargs{})
+      @ TraitDifferentialEquations /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/src/TraitDifferentialEquations.jl:62
+   [13] top-level scope
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:43
+   [14] macro expansion
+      @ /p/projects/coen/julia-trait-bound/julia-unified/usr/share/julia/stdlib/v1.13/Test/src/Test.jl:1967 [inlined]
+   [15] macro expansion
+      @ /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:74 [inlined]
+   [16] include(mapexpr::Function, mod::Module, _path::String)
+      @ Base ./Base.jl:311
+   [17] top-level scope
+      @ /tmp/claude-3147/-p-projects-coen-julia-trait-bound/526e6ede-34f0-459e-97c3-7d1f9ee65230/scratchpad/tde-run.jl:118
+   [18] include(mod::Module, _path::String)
+      @ Base ./Base.jl:310
+   [19] exec_options(opts::Base.JLOptions)
+      @ Base ./client.jl:344
+   [20] _start()
+      @ Base ./client.jl:577
+Test Summary:                          | Pass  Error  Total  Time
+open issue 118: a system's own indices |    5      9     14  1.6s
+RNG of the outermost testset: Random.Xoshiro(0x1631f57daea5158d, 0x1ccca898a3009031, 0x65f567938e372162, 0xfaf896ed339dd14c, 0x472f15a5c80b261e)
+FILE FAILED: r118.jl: LoadError: Some tests did not pass: 5 passed, 0 failed, 9 errored, 0 broken.
+in expression starting at /p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/test/r118.jl:42
+Test Summary:             | Pass  Total  Time
+W-96: Tsit5's interpolant |    6      6  1.1s
+Test Summary:                                               | Pass  Total  Time
+W-96: events on Tsit5's interpolant, the states saved there |   10     10  0.3s
+Test Summary:                     | Pass  Total  Time
+W-96: a discrete callback's saves |    6      6  0.1s
