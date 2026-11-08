@@ -515,6 +515,7 @@ struct CoreProblem{T,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T
     tspan::Tuple{Float64,Float64}
     jac::J
     ad::Bool
+    fplain::UserFunction       # the problem's plain function, for a solver that picks its own dual chunk, or nothing
 end
 core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
 "The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
@@ -536,7 +537,7 @@ attribute (traits reference §7.4). For a problem type that implements `ODEProbl
 function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
     # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
     F <: Dynamic || _member_checked(prob)
-    return CoreProblem(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad)
+    return CoreProblem(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad, prob.fplain)
 end
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
@@ -545,7 +546,7 @@ _member_checked(prob::ODEProblemTrait) = nothing
 # records whose parameter takes its type
 @open core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
     CoreProblem(Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
-                Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false)
+                Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false, UserFunction(nothing))
 
 """
     DiscreteCallback(condition, affect!; initialize = no_initialize)

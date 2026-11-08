@@ -1,0 +1,127 @@
+     Testing TraitDifferentialEquations
+      Status `/tmp/jl_LlJY4Z/Project.toml`
+  [f6369f11] ForwardDiff v1.4.7
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [37e2e46d] LinearAlgebra v1.13.0
+  [8dfed614] Test v1.11.0
+      Status `/tmp/jl_LlJY4Z/Manifest.toml`
+  [bbf7d656] CommonSubexpressions v0.3.1
+  [163ba53b] DiffResults v1.1.0
+  [b552c78f] DiffRules v1.16.0
+  [ffbed154] DocStringExtensions v0.10.2
+  [f6369f11] ForwardDiff v1.4.7
+  [92d709cd] IrrationalConstants v0.2.7
+  [692b3bcd] JLLWrappers v1.8.0
+  [2ab3a3ac] LogExpFunctions v1.0.3
+  [1914dd2f] MacroTools v0.5.16
+  [77ba4419] NaNMath v1.1.5
+  [dde65c3d] ODECore v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/ODECore`
+  [21216c6a] Preferences v1.6.1
+  [276daf66] SpecialFunctions v2.9.1
+⌃ [1e83bf80] StaticArraysCore v1.4.4
+  [1b9b79cd] TraitArrayTools v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitArrayTools`
+  [fc9886c1] TraitDifferentialEquations v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified`
+  [33517989] TraitIndexing v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitIndexing`
+  [86edfd3c] TraitNonlinearSolve v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitNonlinearSolve`
+  [bf920f43] TraitRodas v0.0.1 `/p/projects/coen/julia-trait-bound/TraitDifferentialEquations-unified/lib/TraitRodas`
+  [7a3c1e52] TraitWorld v0.2.0 `/p/projects/coen/julia-trait-bound/TraitWorld-unified`
+  [efe28fd5] OpenSpecFun_jll v0.5.6+0
+  [56f22d72] Artifacts v1.11.0
+  [2a0f44e3] Base64 v1.11.0
+  [ade2ca70] Dates v1.11.0
+  [b77e0a4c] InteractiveUtils v1.11.0
+  [ac6e5ff7] JuliaSyntaxHighlighting v1.12.0
+  [8f399da3] Libdl v1.11.0
+  [37e2e46d] LinearAlgebra v1.13.0
+  [56ddb016] Logging v1.11.0
+  [d6f4376e] Markdown v1.11.0
+  [de0858da] Printf v1.11.0
+  [9a3f8284] Random v1.11.0
+  [ea8e919c] SHA v1.0.0
+  [9e88b42a] Serialization v1.11.0
+  [f489334b] StyledStrings v1.11.0
+  [fa267f1f] TOML v1.0.3
+  [8dfed614] Test v1.11.0
+  [4ec0a83e] Unicode v1.11.0
+  [e66e0078] CompilerSupportLibraries_jll v1.5.5+2
+  [4536629a] OpenBLAS_jll v0.3.30+0
+  [05823500] OpenLibm_jll v0.8.7+0
+  [8e850b90] libblastrampoline_jll v5.15.0+0
+        Info Packages marked with ⌃ have new versions available and may be upgradable.
+     Testing Running tests...
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+WARNING: method _read at TraitIndexing.ValueProvider{Array{T, 1}, P} and TraitIndexing.SeriesProvider{Array{T, 1}, P} is ambiguous for ODECore.ODESolution{T, P} where P where T, a member of both sets
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  1.5s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.2s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  1.3s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.3s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  0.9s
+Test Summary:                                    | Pass  Total  Time
+A problem type with its own cache (LorenzModels) |    5      5  0.8s
+Test Summary:                       | Pass  Total  Time
+Callback types (Bounce, RaiseSigma) |    8      8  1.5s
+Test Summary:                           | Pass  Total  Time
+A problem type: gradients through Tsit5 |    3      3  1.4s
+Test Summary:                             | Pass  Total  Time
+A problem type: errors at the conformance |   10     10  0.7s
+Test Summary:                                         | Pass  Total  Time
+Compiled: a right-hand side with a declared signature |    9      9  2.5s
+Test Summary:                          | Pass  Total  Time
+Compiled: a wrong signature is refused |    7      7  1.2s
+Test Summary:                                          | Pass  Total  Time
+W-34: ODEFunction, a given Jacobian, the chunk at init |   11     11  2.1s
+Test Summary:                                      | Pass  Total  Time
+W-34: a callable model enters form B (ChainModels) |    5      5  2.1s
+Test Summary:                      | Pass  Total  Time
+W-34: the solution as a Trajectory |    6      6  0.4s
+Test Summary:                                                        | Pass  Total  Time
+W-34 move 5: the solution keeps its problem; DiffEqArray; plotpoints |   11     11  0.4s
+Test Summary:                                                             | Pass  Total  Time
+symbolic access (move 4): names from the problem's `sys`, by any provider |    3      3  0.2s
+Test Summary:                                                           | Pass  Total  Time
+symbolic access in a callback (move 4): the integrator it sees, by name |    3      3  0.2s
+Test Summary:                                                                   | Pass  Total  Time
+W-34 move 2: callbacks at the problem's types, the integrator view's operations |   11     11  1.3s
+Test Summary:                                                    | Pass  Total  Time
+R2: optional properties of a problem's function (open issue 119) |   11     11  0.5s
+Test Summary:                               | Pass  Total  Time
+R2: the system object back (census item 12) |    5      5  0.4s
+Test Summary:                                                                         | Pass  Total  Time
+R2: a problem's callbacks, tstops, initialize, the crossing's direction (items 14-16) |    9      9  0.3s
+Test Summary:                               | Pass  Total  Time
+R2: parameters saved by callbacks (item 13) |    3      3  0.1s
+Test Summary:                    | Pass  Total  Time
+R2: init, step!, solve! (item 2) |   16     16  0.6s
+Test Summary:                       | Pass  Total  Time
+Nonlinear problems (census item 11) |   19     19  1.9s
+Test Summary:                      | Pass  Total  Time
+Steady states (SteadyStateProblem) |    5      5  0.9s
+Test Summary:   | Pass  Total  Time
+R3: remake (S7) |    9      9  0.3s
+Test Summary:                     | Pass  Total  Time
+R3: dense output (open issue 117) |   22     22  0.2s
+Test Summary:                 | Pass  Total  Time
+R3: the solution's idxs forms |    5      5  0.2s
+Test Summary:                          | Pass  Total  Time
+open issue 118: a system's own indices |   22     22  1.6s
+Test Summary:             | Pass  Total  Time
+W-96: Tsit5's interpolant |    6      6  0.5s
+Test Summary:                                               | Pass  Total  Time
+W-96: events on Tsit5's interpolant, the states saved there |   10     10  0.2s
+Test Summary:                     | Pass  Total  Time
+W-96: a discrete callback's saves |    6      6  0.1s
+     Testing TraitDifferentialEquations tests passed 

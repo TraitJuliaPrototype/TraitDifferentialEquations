@@ -254,7 +254,7 @@ rodas5_init(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
 
 """
 Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and a plain function from
-the problem (`core_rhs_function`), the function is entered at the duals of chunk `N` here
+the problem (`m.fplain`), the function is entered at the duals of chunk `N` here
 (`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
 """
 function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
@@ -263,7 +263,10 @@ function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,F
     m isa CoreProblem && m.ad || return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
-    jc = dual_jacobian(m.f, n, Val(N))         # the problem's one function, seen at the duals of chunk `N`
+    # the problem's plain function, seen at the duals of chunk `N`: the kept `m.f` is a `Dynamic` at the
+    # problem's own signatures only, and a compiled one (no plain function beside it) is the function itself
+    fp = m.fplain.f
+    jc = dual_jacobian(fp === nothing ? m.f : fp, n, Val(N))
     return rodas5_start(m, u0, tspan, callbacks, opts, jc, alg.linsolve)
 end
 "Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step; a barrier per chunk."

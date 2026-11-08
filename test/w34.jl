@@ -12,10 +12,8 @@ lorenz_jac!(J, u, p, t) = (J[1, 1] = -p[1]; J[1, 2] = p[1]; J[1, 3] = 0.0;
 
 @testset "W-34: ODEFunction, a given Jacobian, the chunk at init" begin
     prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
-    # the record and the bare function give the same problem type, both at `Callable`'s default, `Dynamic`; broken:
-    # the bare function is kept `Compiled` at the front end's argument, whose signature names the method's
-    # variables (compiler C-54)
-    @test_broken typeof(ODEProblem(ODEFunction(lorenz!), U0, (0.0, 1.0), P0)) === typeof(prob)
+    # the record and the bare function give the same problem type, both at `Callable`'s default, `Dynamic`
+    @test typeof(ODEProblem(ODEFunction(lorenz!), U0, (0.0, 1.0), P0)) === typeof(prob)
     # a given Jacobian: Rodas5 calls it
     pj = ODEProblem(ODEFunction(lorenz!; jac = lorenz_jac!), U0, (0.0, 1.0), P0)
     J = zeros(3, 3); u = [1.0, 2.0, 3.0]
@@ -23,7 +21,7 @@ lorenz_jac!(J, u, p, t) = (J[1, 1] = -p[1]; J[1, 2] = p[1]; J[1, 3] = 0.0;
     @test J == [-10.0 10.0 0.0; 25.0 -1.0 -1.0; 2.0 1.0 -8/3]
     # the right-hand side partially evaluated on the parameters (W-63)
     @test rhs_function(pj) === nothing
-    @test_broken rhs_function(prob) isa TraitDifferentialEquations.ODECore.PartialFn && rhs_function(prob).f === lorenz!   # C-54, as above
+    @test rhs_function(prob) isa TraitDifferentialEquations.ODECore.PartialFn && rhs_function(prob).f === lorenz!
     @test isapprox(solve(pj, Rodas5(); abstol = 1e-10, reltol = 1e-10).u[end], REF; rtol = 1e-9)
     # a Jacobian that returns J: its result fails the check of the declared `Nothing` (traits §9)
     badjac!(J, u, p, t) = (J .= 0.0)
@@ -46,7 +44,7 @@ end
     pa = ODEProblem(ChainModel(PathGraph(40)), u0, (0.0, 1.0), [1.0, 0.1])
     pb = ODEProblem(ChainModel(RingGraph(40)), u0, (0.0, 1.0), [1.0, 0.1])
     # one problem type for every graph type and for a plain function: the solver compiles once per (T, P)
-    @test_broken typeof(pa) === typeof(pb) === typeof(ODEProblem(lorenz!, u0, (0.0, 1.0), [1.0, 0.1]))   # `Dynamic` by default: C-54
+    @test typeof(pa) === typeof(pb) === typeof(ODEProblem(lorenz!, u0, (0.0, 1.0), [1.0, 0.1]))   # `Dynamic` by default
     sa = solve(pa, Tsit5())
     @test sa.retcode === :Success && isapprox(sum(sa.u[end]), sum(u0); rtol = 0.1)
     # a named tuple for p, and compiled_for: the same values
