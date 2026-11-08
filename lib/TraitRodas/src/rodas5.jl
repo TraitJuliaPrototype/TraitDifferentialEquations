@@ -133,7 +133,7 @@ mutable struct Rodas5Integrator{JC,M}
     nf::Int
     njac::Int
     const jc::JC
-    const ls::LinearSolver           # Kept{LinearSolver}: W's factorization, per step
+    const ls::LinearSolver           # W's factorization, per step
     tprev::Float64
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
@@ -161,7 +161,7 @@ function step_interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
     return nothing
 end
 step_dt_reset!(i::Rodas5Integrator) = (i.dt_reset = true; nothing)
-@implement StepView Rodas5Integrator{JC,M} where {JC,M}
+@implement StepView{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M}
 @implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M} begin
     advance!(i) = rodas5_advance!(i)
     core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf,
@@ -184,7 +184,7 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
     @inbounds for k in 1:n; W[k, k] -= 1 / dtgamma; end
     F = linfactor(i.ls, W)                             # a Solvable, for the eight stages
     @inbounds for j in 1:n; ltmp[j] = i.fsal[j] + dt * R5d[1] * dT[j]; end
-    solve!(F, ks[1], ltmp)
+    ldiv!(ks[1], F, ltmp)
     ks[1] .*= -1
     for stage in 2:8
         @inbounds for j in 1:n
@@ -201,7 +201,7 @@ function rodas5_step!(m, i::Rodas5Integrator, dt::Float64, abstol::Float64, relt
             for l in 1:stage-1; acc += R5C[stage, l] / dt * ks[l][j]; end
             ltmp[j] = du[j] + dt * R5d[stage] * dT[j] + acc
         end
-        solve!(F, ks[stage], ltmp)
+        ldiv!(ks[stage], F, ltmp)
         ks[stage] .*= -1
     end
     acc2 = 0.0

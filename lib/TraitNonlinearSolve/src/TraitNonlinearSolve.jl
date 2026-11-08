@@ -15,6 +15,7 @@ solvers and its dual numbers.
 """
 module TraitNonlinearSolve
 using TraitWorld
+@trait_module
 using ODECore
 using ODECore: LinearSolver, linfactor, DenseLU, FDual, DUAL_CHUNK, HasSystem, HasJacobianPrototype, getsystem,
                ODEFunction, ODEProblemTrait
@@ -24,18 +25,18 @@ import LinearAlgebra
 export NonlinearProblemTrait, residual!, nl_jacobian!, NonlinearProblem, NonlinearFunction, SteadyStateProblem,
        NonlinearAlgorithm, solve_nl, NLCoreProblem, NLCoreSolution, NLOptions, nl_residual!, nl_core_jacobian!,
        NonlinearSolution, NLStats, NewtonRaphson, TrustRegion, NonlinearPolyalg, successful_retcode
-@trait_module begin
 include("problems.jl")
 include("solvers.jl")
-end
 
 # The precompile workload: the solvers for plain functions with `Vector{Float64}` states, whatever the function
 # (only the function itself is compiled, at its declared signature, when the problem is solved).
 _wl_res!(r, u, p) = (r[1] = u[1]^2 - p[1]; r[2] = u[2] - u[1]; nothing)
 _wl_ss!(du, u, p, t) = (du[1] = p[1] - u[1]; du[2] = u[1] - u[2]; nothing)
-TraitWorld.@workload begin
+if ccall(:jl_generating_output, Cint, ()) == 1   # a precompile workload, run while the package image is built
+    let
     solve(NonlinearProblem(_wl_res!, [1.0, 1.0], [2.0]), NonlinearPolyalg())
     solve(SteadyStateProblem(_wl_ss!, [0.0, 0.0], [1.0]), NewtonRaphson())
     solve(NonlinearProblem(_wl_res!, [1.0, 1.0], [2.0]), TrustRegion())
+    end
 end
 end

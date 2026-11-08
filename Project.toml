@@ -19,7 +19,7 @@ TraitIndexing = {path = "lib/TraitIndexing"}
 ODECore = {path = "lib/ODECore"}
 TraitRodas = {path = "lib/TraitRodas"}
 TraitNonlinearSolve = {path = "lib/TraitNonlinearSolve"}
-TraitWorld = {path = "../TraitWorld"}
+TraitWorld = {path = "../TraitWorld-unified"}
 
 [compat]
 ForwardDiff = "1.4.6"

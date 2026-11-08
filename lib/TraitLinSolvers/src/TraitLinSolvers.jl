@@ -7,15 +7,14 @@ any solver package knows the other.
 """
 module TraitLinSolvers
 using TraitWorld
+@trait_module
 using ODECore: LinearSolver
 import ODECore: linfactor
 import LinearAlgebra
 export DenseQR
-@trait_module begin
 "Dense QR with column pivoting: slower than LU, more robust for ill-conditioned systems."
 struct DenseQR end
 @implement LinearSolver DenseQR begin
     linfactor(ls, W) = LinearAlgebra.qr!(W, LinearAlgebra.ColumnNorm())
-end
 end
 end

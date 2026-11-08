@@ -105,10 +105,10 @@ end
 nl_no_jacobian(J, u) = nothing
 const NLNoJacobian = typeof(nl_no_jacobian)
 
-# a user's function partially evaluated, with its attribute (traits reference §6.4): `compiled_for(f)` stays compiled,
-# a kept function gives the user's function itself, so that the one function is seen at each signature (the duals too)
-Base.@nospecializeinfer _nlpartial(@nospecialize(f), p) = rewrap(Base.Fix2(NLPartial, p), f)
-Base.@nospecializeinfer _attime(@nospecialize(f), p, t::Float64) = rewrap(g -> AtTime(g, p, t), f)
+# a user's function partially evaluated, as a plain record (a kept function: its object); `_nlproblem` keeps it at
+# `Callable`'s default, `Dynamic` (the front end takes no cast: open issue 159)
+Base.@nospecializeinfer _nlpartial(@nospecialize(f), p) = NLPartial(f isa Dynamic ? unwrap(f) : f, p)
+Base.@nospecializeinfer _attime(@nospecialize(f), p, t::Float64) = AtTime(f isa Dynamic ? unwrap(f) : f, p, t)
 
 """
     NonlinearProblem{T, P, F, J}
@@ -116,7 +116,7 @@ Base.@nospecializeinfer _attime(@nospecialize(f), p, t::Float64) = rewrap(g -> A
 TDE's own nonlinear problem, the canonical implementation of `NonlinearProblemTrait`: the residual partially
 evaluated on the parameters and kept at a parameter bounded by `Callable{NLSig{T}, Nothing}` (traits reference
 §7.4), so the solvers compile once per state type whatever the function and the parameters (`Dynamic`, the
-default), or per function under `compiled_for(f)`; the initial guess; the parameters; the Jacobian (given, or the
+default); the initial guess; the parameters; the Jacobian (given, or the
 library's `nl_no_jacobian`, kept compiled, so `nl_jacobian!` folds on `J`); `ad`, whether the Jacobian is by the
 library's duals; and the function's optional properties, kept as given (the system object, a Jacobian prototype).
 Made by `NonlinearProblem(f, u0, p)` and `SteadyStateProblem(f, u0, p; t)`.
@@ -132,7 +132,8 @@ struct NonlinearProblem{T,P,F<:Callable{NLSig{T},Nothing},J<:Callable{NLJacSig{T
 end
 residual!(prob::NonlinearProblem{T}, r::Vector{T}, u::Vector{T}) where {T} = (prob.f(r, u)::Nothing; nothing)
 "The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state; else by finite differences."
-nl_jacobian!(prob::NonlinearProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,P,F,J} =
+# open on purpose (traits §7.3): it calls the residual at the library's duals, a second signature it is kept at (§9)
+@open nl_jacobian!(prob::NonlinearProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,P,F,J} =
     J === NLNoJacobian ? (prob.ad ? _nl_ad_jacobian!(prob.f, Jm, u, Val(DUAL_CHUNK)) : nl_fd_jacobian!(prob, Jm, u)) :
     (prob.jac(Jm, u)::Nothing; nothing)
 @implement NonlinearProblemTrait{T,P} NonlinearProblem{T,P,F,J} where {T,P,F,J}
@@ -203,10 +204,12 @@ Base.@nospecializeinfer SteadyStateProblem(@nospecialize(prob); t::Real = Inf) =
 _steady(prob::ODEProblemTrait{T,P}, t::Float64, @nospecialize(sys), @nospecialize(jp)) where {T,P} =
     NonlinearProblem(ProblemAtTime(prob, t), prob.u0, prob.p, ProblemJacAtTime(prob, t), false, sys, jp)
 
+# the plain records kept `Dynamic`: the residual at both signatures where its Jacobian is by duals (traits §7.7, §9)
 function _nlproblem(@nospecialize(r), @nospecialize(jr), u0::Vector{T}, p::P, @nospecialize(sys), @nospecialize(jp)) where {T,P}
     ad = T === Float64 && jr === nothing
-    jk = jr === nothing ? compiled_for(nl_no_jacobian) : jr
-    return NonlinearProblem(r, u0, p, jk, ad, sys, jp)
+    X = ad ? All{Callable{NLSig{T},Nothing}, Callable{NLDualSig{DUAL_CHUNK},Nothing}} : Callable{NLSig{T},Nothing}
+    jk = jr === nothing ? nl_no_jacobian : Dynamic{Callable{NLJacSig{T},Nothing}}(jr)
+    return NonlinearProblem(Dynamic{X}(r), u0, p, jk, ad, sys, jp)
 end
 
 """
@@ -225,7 +228,8 @@ end
 "The residual at `u`, into `r`."
 nl_residual!(m::NLCoreProblem{T}, r::Vector{T}, u::Vector{T}) where {T} = (m.f(r, u)::Nothing; nothing)
 "The core's Jacobian at `u`: the given one; else by the duals for a `Float64` state; else by finite differences."
-nl_core_jacobian!(m::NLCoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,F,J} =
+# open on purpose, as `nl_jacobian!`
+@open nl_core_jacobian!(m::NLCoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,F,J} =
     J === NLNoJacobian ? (m.ad ? _nl_ad_jacobian!(m.f, Jm, u, Val(DUAL_CHUNK)) : nl_fd_jacobian!(m, Jm, u)) :
     (m.jac(Jm, u)::Nothing; nothing)
 _residual!(prob, r, u) = residual!(prob, r, u)
@@ -268,7 +272,7 @@ end
     NonlinearSolution{T, P}
 
 A nonlinear problem's solution as the user sees it: `u`, `resid`, `retcode`, `stats`, the problem kept with its
-attribute (`sol.prob`, a `Kept{NonlinearProblemTrait{T, P}}`: no axis for its function or type), and the system
+attribute (`sol.prob`, a field typed `NonlinearProblemTrait{T, P}`: no axis for its function or type), and the system
 object its function carried (`HasSystem`, `getsystem(sol)`).
 """
 struct NonlinearSolution{T,P}
@@ -276,7 +280,7 @@ struct NonlinearSolution{T,P}
     resid::Vector{T}
     retcode::Symbol
     stats::NLStats
-    prob::Kept{NonlinearProblemTrait{T,P}}
+    prob::NonlinearProblemTrait{T,P}
     sys::Any
 end
 @implement HasSystem NonlinearSolution{T,P} where {T,P} begin

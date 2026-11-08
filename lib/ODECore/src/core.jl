@@ -18,7 +18,7 @@
 #     so the solvers' code is compiled per state type, whatever the parameters.
 # (the body of the trait module `ODECore`, src/ODECore.jl)
 using TraitWorld
-import TraitWorld: solve!          # BaseTraits' `solve!` (a `Solvable`'s), extended for `init`'s integrator
+using LinearAlgebra: ldiv!          # a `Solvable`'s operation (BaseTraits)
 using LinearAlgebra: lu!, I, UniformScaling
 using TraitIndexing                  # symbolic access (move 4): SymbolicIndexingInterface's part
 using TraitArrayTools                # the solution as a trajectory (move 5): RecursiveArrayTools' part
@@ -177,7 +177,7 @@ end
 A solver's dense output (open issue 117): the state at any time `τ` within the steps it took, by the solver's
 own interpolant. An open set, as the solvers are: each solver keeps its steps in a record of its own that
 implements this trait (`Tsit5Steps` for Tsit5, TraitRodas' `Rodas5Steps`), and the solution keeps it as a
-`Kept{Interpolant{U, T}}`, so its type has no axis for the solver. `τ` is within the steps (the solution checks).
+field typed by the trait, so its type has no axis for the solver. `τ` is within the steps (the solution checks).
 """
 @trait Interpolant{U, T} begin
     interpolate(ip::Interpolant{U, T}, τ::T)::U
@@ -195,7 +195,7 @@ struct CoreSolution{T}
     naccept::Int
     nreject::Int
     nf::Int
-    interp::Union{Nothing,Kept{Interpolant{Vector{T},Float64}}}
+    interp::Union{Nothing,Interpolant{Vector{T},Float64}}
 end
 "A solution without dense output."
 CoreSolution{T}(t, u, retcode, naccept, nreject, nf) where {T} = CoreSolution{T}(t, u, retcode, naccept, nreject, nf, nothing)
@@ -229,7 +229,7 @@ function push_step!(d::Tsit5Steps{T}, t0::Float64, t1::Float64, dt::Float64, u0:
 end
 "A solver's steps as the solution keeps them: kept as an `Interpolant`, or `nothing` (no dense output, or no step taken)."
 kept_interpolant(::Nothing) = nothing
-kept_interpolant(d::Interpolant{U,Float64}) where {U} = Kept{Interpolant{U,Float64}}(d)
+kept_interpolant(d::Interpolant{U,Float64}) where {U} = keep(d)
 
 """
     CoreIntegrator{U, T}
@@ -287,11 +287,11 @@ end
 # - A kept value (a function kept at `Callable`) is read through its kept trait only: at a bound its held object does
 #   not conform to, TraitWorld raises `TraitBoundError` where a plain value reaches the ordinary fallback (traits §5.5,
 #   §6.5; a candidate open issue, E-239). Casts (`compiled_for`, `with_dynamic`) are seen through, at the bound.
-"Whether `x` is a kept value (`Dynamic{X}`, `Compiled{X}`, `Kept{X}`)."
-_iskept(@nospecialize(x)) = x isa Union{Dynamic,Compiled,Kept}
+"Whether `x` is a kept value (`Dynamic{X}`)."
+_iskept(@nospecialize(x)) = x isa Dynamic
 "Whether the front end reads `x`'s property `X` by the bound: not for a function that does not declare `X`, nor a kept value of another trait."
 _by_bound(@nospecialize(x), @nospecialize(X::Type)) =
-    !((x isa Function || _iskept(x)) && !conforms(typeof(x), X))
+    !((x isa Function || _iskept(x)) && !(x isa X))
 "The system object `x` carries, or `nothing`."
 Base.@nospecializeinfer function _system(@nospecialize(x))
     x === nothing && return nothing
@@ -451,7 +451,8 @@ end
 no_jacobian(J, u, p, t) = nothing
 rhs!(prob::ODEProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (prob.f(du, u, t)::Nothing; nothing)
 "The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state, by finite differences otherwise."
-jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,J} =
+# open on purpose (traits §7.3): it calls the function at the library's duals, a second signature it is kept at (§9)
+@open jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,J} =
     J === CoreNoJacobian ? (prob.ad ? _ad_jacobian!(prob.f, Jm, u, t, Val(DUAL_CHUNK)) : fd_jacobian!(prob, Jm, u, t)) :
     (prob.jac(Jm, u, t)::Nothing; nothing)
 "The user's function partially evaluated, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
@@ -515,7 +516,8 @@ struct CoreProblem{T,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T
 end
 core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
 "The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
-core_jacobian!(m::CoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,J} =
+# open on purpose, as `jacobian!`: the function at the duals
+@open core_jacobian!(m::CoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,J} =
     J === CoreNoJacobian ? (m.ad ? _ad_jacobian!(m.f, Jm, u, t, Val(DUAL_CHUNK)) : fd_jacobian!(m, Jm, u, t)) :
     (m.jac(Jm, u, t)::Nothing; nothing)
 "The problem's right-hand side, whatever the problem: its `rhs!`, or the core's partially evaluated function."
@@ -548,17 +550,17 @@ The user's callback from plain functions (SciML's): `condition(u, t, integ)::Boo
 `::Float64` (continuous: an event where it changes sign), `affect!(integ)`; for a continuous callback
 `affect_neg!(integ)` where the condition falls through zero (`affect!` where it rises); `initialize(u, t, integ)`,
 called once at the solver's `init` (SciML's `initialize`, without the callback argument). They keep the functions
-before the problem's types are known, each with its attribute (`Kept{Callable}`, traits reference §7.5);
+before the problem's types are known, as given (a field typed by `Callable`; open issue 159);
 a solver's `init` enters them at `(U, T, P)` (`enter_callbacks`). Every crossing is an event: an affect
 of `nothing` (SciML's "not an event in this direction") is refused. The solution saves the state before and
 after each affect (SciML's `save_positions` at its default; `save_step!`, `save_state!`).
 """
 struct DiscreteCallback
-    condition::Callable              # Kept{Callable}: a function kept without a signature
+    condition::Callable              # a function kept without a signature (open issue 159)
     affect!::Callable
     initialize::Callable
     Base.@nospecializeinfer DiscreteCallback(@nospecialize(c), @nospecialize(a); @nospecialize(initialize = no_initialize)) =
-        new(Kept{Callable}(c), Kept{Callable}(_affect(a)), Kept{Callable}(initialize))
+        new(c, _affect(a), initialize)
 end
 struct ContinuousCallback
     condition::Callable
@@ -566,14 +568,14 @@ struct ContinuousCallback
     affect_neg!::Callable
     initialize::Callable
     Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a), @nospecialize(an = a); @nospecialize(initialize = no_initialize)) =
-        new(Kept{Callable}(c), Kept{Callable}(_affect(a)), Kept{Callable}(_affect(an)), Kept{Callable}(initialize))
+        new(c, _affect(a), _affect(an), initialize)
 end
 "A callback's `initialize` that does nothing (the default)."
 no_initialize(u, t, integ) = nothing
 Base.@nospecializeinfer _affect(@nospecialize(a)) = a === nothing ?
     throw(ArgumentError("an affect of `nothing` is not taken: every crossing is an event (pass a function that does nothing)")) : a
 
-"A discrete callback as the integrator keeps it: its plain functions entered at the problem's types, each kept with its attribute (`Kept{Callable{…}}`)."
+"A discrete callback as the integrator keeps it: its plain functions at the problem's types, in fields typed by `Callable`: called through the trait, compiled once."
 struct FunctionCallback{U,T,P}
     cond::Callable{CondSig{U,T,P},Bool}
     aff::Callable{AffectSig{U,T,P},Nothing}
@@ -607,8 +609,8 @@ if it does not conform at these types. The integrator keeps the two vectors.
 """
 function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
     T = Float64
-    d = Kept{Callback{U,T,P}}[]                  # `Callback{U,T,P}[]` is not taken as `Kept{…}` here (E-158 finding)
-    c = Kept{EventCallback{U,T,P}}[]
+    d = Callback{U,T,P}[]
+    c = EventCallback{U,T,P}[]
     for cb in cbs
         if cb isa DiscreteCallback
             push!(d, FunctionCallback{U,T,P}(cb.condition, cb.affect!, cb.initialize))
@@ -622,12 +624,12 @@ function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
 end
 # a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which sees
 # through casts and kept values; a value of both traits is a continuous one
-_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::EventCallback{U,T,P}) where {U,T,P} =
-    (push!(c, Kept{EventCallback{U,T,P}}(cb)); nothing)
-_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::Callback{U,T,P}) where {U,T,P} =
-    (push!(d, Kept{Callback{U,T,P}}(cb)); nothing)
-_enter_callback!(d::Vector{Kept{Callback{U,T,P}}}, c::Vector{Kept{EventCallback{U,T,P}}}, cb::(EventCallback{U,T,P}, Callback{U,T,P})) where {U,T,P} =
-    (push!(c, Kept{EventCallback{U,T,P}}(cb)); nothing)
+_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::EventCallback{U,T,P}) where {U,T,P} =
+    (push!(c, keep(cb)); nothing)
+_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::Callback{U,T,P}) where {U,T,P} =
+    (push!(d, keep(cb)); nothing)
+_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::All{EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
+    (push!(c, keep(cb)); nothing)
 
 """
     ParamIntegrator{U, T, P}
@@ -665,10 +667,10 @@ save_discretes!(i::ParamIntegrator) = (push!(i.pt, i.t); push!(i.pu, _saved(i.p)
 "A copy of the parameters to save: the solve goes on changing the integrator's."
 _saved(p::AbstractArray) = copy(p)
 _saved(p) = deepcopy(p)
-@implement HasProperty{:ps, ParameterView{P}} ParamIntegrator{U,T,P} where {U,T,P} begin
-    property(i, ::Val{:ps}) = ParameterView(getfield(i, :p), getfield(i, :names))
-end
-@implement IntegratorView ParamIntegrator{U,T,P} where {U,T,P}
+# `integ.ps`, the parameters by name: a property of the integrator's own (`HasProperty{:ps, …}`, traits §10.1)
+Base.getproperty(i::ParamIntegrator, s::Symbol) = s === :ps ? ParameterView(getfield(i, :p), getfield(i, :names)) : getfield(i, s)
+@implement HasProperty{:ps, ParameterView{P}} ParamIntegrator{U,T,P} where {U,T,P}
+@implement IntegratorView{U,T,P} ParamIntegrator{U,T,P} where {U,T,P}
 # the integrator a callback sees, by name: `getstate(integ, :x)`, `getparam(integ, :σ)` (SciML's `integ[:x]`,
 # `integ.ps[:σ]`), through the traits the integrator conforms to (traits §6.5)
 @implement IndexProvider{Symbol} ParamIntegrator{U,T,P} where {U,T,P} begin
@@ -685,7 +687,7 @@ end
 end
 
 function _sync_in!(pi::ParamIntegrator{U,T}, sv::StepView{U,T}) where {U,T}
-    pi.sv = sv
+    pi.sv = Dynamic{StepView{U,T}}(sv)        # the field's type: wrapped (a `Dynamic` stays itself)
     pi.u = sv.u; pi.t = sv.t; pi.dt = sv.dt
     pi.u_modified = sv.u_modified; pi.terminated = sv.terminated
     return nothing
@@ -695,7 +697,7 @@ _sync_out!(pi::ParamIntegrator{U,T}, sv::StepView{U,T}) where {U,T} =
 
 "A user's discrete callback, kept at the problem's types, adapted to the solver core (W-63): the outer layer's, compiled per parameter type."
 struct ParamCallback{U,T,P}
-    cb::Kept{Callback{U,T,P}}
+    cb::Callback{U,T,P}
     pi::ParamIntegrator{U,T,P}
     view::Dynamic{IntegratorView{U,T,P}}
 end
@@ -709,7 +711,7 @@ step_initialize!(c::ParamCallback{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) 
 
 "A user's continuous callback, adapted to the solver core."
 struct ParamEvent{U,T,P}
-    cb::Kept{EventCallback{U,T,P}}
+    cb::EventCallback{U,T,P}
     pi::ParamIntegrator{U,T,P}
     view::Dynamic{IntegratorView{U,T,P}}
 end
@@ -755,23 +757,23 @@ The solver core's `init` step for callbacks: values of `StepCallback{U, Float64}
 """
 function enter_step_callbacks(cbs::Vector{Any}, ::Type{U}) where {U}
     T = Float64
-    d = Kept{StepCallback{U,T}}[]
-    c = Kept{StepEvent{U,T}}[]
+    d = StepCallback{U,T}[]
+    c = StepEvent{U,T}[]
     for cb in cbs
         _enter_step_callback!(d, c, cb)
     end
     return d, c
 end
 
-_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::StepEvent{U,T}) where {U,T} =
-    (push!(c, Kept{StepEvent{U,T}}(cb)); nothing)
-_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::StepCallback{U,T}) where {U,T} =
-    (push!(d, Kept{StepCallback{U,T}}(cb)); nothing)
-_enter_step_callback!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, cb::(StepEvent{U,T}, StepCallback{U,T})) where {U,T} =
-    (push!(c, Kept{StepEvent{U,T}}(cb)); nothing)
+_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepEvent{U,T}) where {U,T} =
+    (push!(c, keep(cb)); nothing)
+_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepCallback{U,T}) where {U,T} =
+    (push!(d, keep(cb)); nothing)
+_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::All{StepEvent{U,T}, StepCallback{U,T}}) where {U,T} =
+    (push!(c, keep(cb)); nothing)
 
 "The callbacks' `initialize` at a solver's `init`, at the initial state (SciML's `initialize_callbacks!`): the continuous ones, then the discrete ones."
-function initialize_step_callbacks!(d::Vector{Kept{StepCallback{U,T}}}, c::Vector{Kept{StepEvent{U,T}}}, u::U, t::T, sv::StepView{U,T}) where {U,T}
+function initialize_step_callbacks!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T}
     for cb in c; step_event_initialize!(cb, u, t, sv); end
     for cb in d; step_initialize!(cb, u, t, sv); end
     return nothing
@@ -799,11 +801,11 @@ const DEFAULT_OPTIONS = SolverOptions(1e-6, 1e-3, Inf, 100_000, Float64[], Float
     ODESolution{T, P}
 
 A solution as the user sees it (SciML's move 5): the saved times `t` and states `u`, the return code, the
-counts, and the problem it solves, kept with its attribute (`sol.prob`, a `Kept{ODEProblemTrait{T, P}}`). Its
+counts, and the problem it solves, kept with its attribute (`sol.prob`, a field typed `ODEProblemTrait{T, P}`). Its
 type names the state's element type and the parameters' type, never the model, the function or the solver: one
 solution type for every function, model, problem type and solver of those types. A
 `Trajectory{Vector{T}, Float64}`; `sol(τ)` is `at(sol, τ)`: by the solver's interpolant where the solve kept
-one (`interp`, a `Kept{Interpolant{Vector{T}, Float64}}`: with `dense`, the default without `saveat`; open
+one (`interp`, a field typed `Interpolant{Vector{T}, Float64}`: with `dense`, the default without `saveat`; open
 issue 117), else linear between the saved states.
 """
 struct ODESolution{T,P}
@@ -813,12 +815,12 @@ struct ODESolution{T,P}
     naccept::Int
     nreject::Int
     nf::Int
-    prob::Kept{ODEProblemTrait{T,P}}            # the problem, kept: no axis for its function or its type
+    prob::ODEProblemTrait{T,P}                  # the problem, kept: no axis for its function or its type
     sys::Any                                     # the problem's system object, or nothing
     names::Union{Nothing,Dynamic{IndexProvider{Symbol}}} # its names, or none
     pt::Vector{Float64}                          # the parameters saved by callbacks (`save_discretes!`): times,
     pu::Vector{P}                                # and values; empty when no callback could change them
-    interp::Union{Nothing,Kept{Interpolant{Vector{T},Float64}}}   # the solver's dense output, or none
+    interp::Union{Nothing,Interpolant{Vector{T},Float64}}   # the solver's dense output, or none
 end
 
 # the solution as a trajectory (move 5): `Trajectory` is TraitArrayTools', RecursiveArrayTools' stand-in,
@@ -898,7 +900,7 @@ end
     series_parameters(s, k) = parameters_at(s, getfield(s, :t)[k])
 end
 "The time series of state variable `sym` (SciML's `sol[:x]`): one getter per element type, whatever the names' provider."
-function getseries(s::(Trajectory{U,Float64}, IndexProvider{Symbol}), sym::Symbol) where {U}
+function getseries(s::All{Trajectory{U,Float64}, IndexProvider{Symbol}}, sym::Symbol) where {U}
     i = variable_index(s, sym)
     i === nothing && throw(ArgumentError("no state variable named :$sym"))
     ts = times(s)
@@ -982,7 +984,7 @@ struct Newton{L <: LinearSolver}
 end
 Newton(; linsolve = DenseLU(), maxiters = 10, tol = 1e-10) = Newton(linsolve, maxiters, tol)
 struct NewtonCache
-    ls::LinearSolver                 # Kept{LinearSolver}
+    ls::LinearSolver
     maxiters::Int
     tol::Float64
     J::Matrix{Float64}
@@ -1015,7 +1017,7 @@ function newton_stage!(ls::LinearSolver, J::Matrix{Float64}, r::Vector{Float64},
             end
             F = linfactor(ls, J)
         end
-        solve!(F, dx, r)
+        ldiv!(dx, F, r)
         @inbounds for i in 1:n
             x[i] -= dx[i]
         end
@@ -1084,7 +1086,7 @@ step_interp!(i::Tsit5Integrator{T}, out::Vector{T}, τ::Float64) where {T} =
 "The last accepted step's stages: `kprev` is `f` at its start (`k1` is `f` at its end by then)."
 _stages(i::Tsit5Integrator) = (i.kprev, i.k2, i.k3, i.k4, i.k5, i.k6, i.k7)
 step_dt_reset!(i::Tsit5Integrator) = (i.dt_reset = true; nothing)
-@implement StepView Tsit5Integrator{T,M} where {T,M}
+@implement StepView{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M}
 @implement CoreIntegrator{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M} begin
     advance!(i) = tsit5_advance!(i)
     core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf, kept_interpolant(_steps(i.dense)))
@@ -1423,7 +1425,7 @@ located by bisection on the interpolant (`event_time`); the integrator is moved 
 event's callback (`0`: none) and whether its condition rose through zero. A callback's condition just after
 its own event (`NaN` in `evprev`) is read a little into the step (SciML's repeat nudge). Shared by the solvers.
 """
-function locate_events!(events::Vector{Kept{StepEvent{Vector{Float64},Float64}}}, evprev::Vector{Float64},
+function locate_events!(events::Vector{StepEvent{Vector{Float64},Float64}}, evprev::Vector{Float64},
                         iv::StepView{Vector{Float64},Float64}, u::Vector{Float64}, utilde::Vector{Float64},
                         tprev::Float64, t::Float64, dt::Float64)
     ke, te, up = 0, t, false

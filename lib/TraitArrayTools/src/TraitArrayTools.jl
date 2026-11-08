@@ -9,8 +9,8 @@ whatever produced the trajectory. A plotting package needs this package, not the
 """
 module TraitArrayTools
 using TraitWorld
+@trait_module
 export Trajectory, times, state, at, DiffEqArray, plotpoints, linear_at
-@trait_module begin
 """
     Trajectory{U, T}
 
@@ -80,6 +80,5 @@ function plotpoints(s::Trajectory{U,Float64}, i::Int) where {U}
         out[k, 2] = Float64(state(s, k)[i])
     end
     return out
-end
 end
 end

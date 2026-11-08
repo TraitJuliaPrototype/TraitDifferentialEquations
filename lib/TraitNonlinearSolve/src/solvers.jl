@@ -94,7 +94,7 @@ function newton_raphson(ls::LinearSolver, linesearch::Bool, m::NLCoreProblem, op
         nl_core_jacobian!(m, J, x); nj += 1
         F = _factor(ls, W, J); nfac += 1
         F === nothing && return NLCoreSolution{Float64}(x, r, :ConvergenceFailure, NLStats(k, nf, nj, nfac))
-        solve!(F, dx, r)
+        LinearAlgebra.ldiv!(dx, F, r)
         all(isfinite, dx) || return NLCoreSolution{Float64}(x, r, :ConvergenceFailure, NLStats(k, nf, nj, nfac))
         φ0 = sum(abs2, r)
         α = 1.0
@@ -150,7 +150,7 @@ function trust_region(ls::LinearSolver, Δ0::Float64, Δmax::Float64, m::NLCoreP
             F = _factor(ls, W, J); nfac += 1
             okN = F !== nothing
             if okN
-                solve!(F, pN, r)
+                LinearAlgebra.ldiv!(pN, F, r)
                 pN .*= -1
                 okN = all(isfinite, pN)
             end
@@ -209,13 +209,13 @@ code. The default, `NonlinearPolyalg()`, is Newton–Raphson, then Newton–Raph
 trust region (NonlinearSolve's default polyalgorithm's Jacobian-based members); `solve(prob)` uses it.
 """
 struct NonlinearPolyalg
-    algs::Vector{Kept{NonlinearAlgorithm}}
+    algs::Vector{NonlinearAlgorithm}
 end
 # (no `@nospecialize` on the vararg: lowering L-46)
 function NonlinearPolyalg(a1, rest...)
-    v = Kept{NonlinearAlgorithm}[]
+    v = NonlinearAlgorithm[]
     for a in (a1, rest...)
-        push!(v, Kept{NonlinearAlgorithm}(a))
+        push!(v, a)
     end
     return NonlinearPolyalg(v)
 end
@@ -223,7 +223,7 @@ NonlinearPolyalg() = NonlinearPolyalg(NewtonRaphson(), NewtonRaphson(linesearch 
 @implement NonlinearAlgorithm NonlinearPolyalg begin
     solve_nl(a, m, opts) = polyalg_solve(a.algs, m, opts)
 end
-function polyalg_solve(algs::Vector{Kept{NonlinearAlgorithm}}, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
+function polyalg_solve(algs::Vector{NonlinearAlgorithm}, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
     isempty(algs) && throw(ArgumentError("a polyalgorithm without members"))
     best = nothing
     stats = NLStats(0, 0, 0, 0)

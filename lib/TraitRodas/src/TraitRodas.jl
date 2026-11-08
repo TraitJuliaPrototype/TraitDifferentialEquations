@@ -7,6 +7,7 @@ edited for it. What it imports from the core below is what a solver package need
 """
 module TraitRodas
 using TraitWorld
+@trait_module
 using ODECore
 # the solver API: the core's problem and its calls, the dual numbers the core keys its problems' functions
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
@@ -18,8 +19,7 @@ using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, Ste
 import ODECore: solve_core, init_core, advance!, core_solution, step_tstop!, step_terminate!, step_interp!, step_dt_reset!,
                 interpolate, push_step!
 import ForwardDiff
+using LinearAlgebra: ldiv!
 export Rodas5
-@trait_module begin
 include("rodas5.jl")
-end
 end
