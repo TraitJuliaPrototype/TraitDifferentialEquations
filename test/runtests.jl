@@ -121,3 +121,8 @@ include("nonlinear.jl")
 include("r3.jl")
 include("r118.jl")
 include("w96.jl")
+
+# a cast or a carried attribute at a parameter no trait types has no effect (open issue 162)
+@testset "TraitDifferentialEquations: no casts without effect" begin
+    @test isempty(detect_unused_casts(TraitDifferentialEquations))
+end
