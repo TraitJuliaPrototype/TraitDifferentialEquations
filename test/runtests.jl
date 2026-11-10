@@ -126,3 +126,11 @@ include("w96.jl")
 @testset "TraitDifferentialEquations: no casts without effect" begin
     @test isempty(detect_unused_casts(TraitDifferentialEquations))
 end
+
+# two traits' operations of one function need a joint method (traits §6.3; open issue 174)
+@testset "TraitDifferentialEquations: no pair of trait methods without a joint method" begin
+    mods = filter(!isnothing, [get(Base.loaded_modules, id, nothing) for id in keys(Base.loaded_modules)
+                               if id.name in ("ODECore", "TraitArrayTools", "TraitIndexing", "TraitNonlinearSolve", "TraitRodas", "TraitDifferentialEquations")])
+    @test length(mods) == 6
+    @test isempty(Test.detect_ambiguities(mods...; recursive = true))
+end

@@ -162,7 +162,7 @@ end
 _read(v::ValueProvider{U, P}, f) where {U, P} = f(state_values(v), parameter_values(v), current_time(v))
 _read(s::SeriesProvider{U, P}, f) where {U, P} = _series(s, f)
 # a value of both (a solution: its final values, and its saved ones) is read as a series, as SymbolicIndexingInterface reads a time series
-_read(s::All{SeriesProvider{U, P}, ValueProvider{U, P}}, f) where {U, P} = _series(s, f)
+_read(s::All{SeriesProvider{U, P}, ValueProvider{U2, P2}}, f) where {U, P, U2, P2} = _series(s, f)
 # a loop, not a comprehension: a closure would capture `s` (traits §7.3); the element type as `collect` gives it
 function _series(s, f)
     ts = series_times(s)
