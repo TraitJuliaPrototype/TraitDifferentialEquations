@@ -1,0 +1,68 @@
+Test Summary:                     | Pass  Total  Time
+TraitDifferentialEquations: Tsit5 |    6      6  1.1s
+Test Summary:                         | Pass  Total  Time
+TraitDifferentialEquations: callbacks |    5      5  0.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: Rodas5 with the library's duals |    6      6  1.1s
+Test Summary:                                               | Pass  Total  Time
+TraitDifferentialEquations: gradients through Tsit5 (row 5) |    8      8  1.1s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: a Float32 state (row 6) |    2      2  0.8s
+Test Summary:                                    | Pass  Total  Time
+A problem type with its own cache (LorenzModels) |    5      5  0.7s
+Test Summary:                       | Pass  Total  Time
+Callback types (Bounce, RaiseSigma) |    8      8  0.8s
+Test Summary:                           | Pass  Total  Time
+A problem type: gradients through Tsit5 |    3      3  1.1s
+Test Summary:                             | Pass  Total  Time
+A problem type: errors at the conformance |   10     10  0.4s
+Test Summary:                                         | Pass  Total  Time
+Compiled: a right-hand side with a declared signature |    9      9  2.3s
+Test Summary:                          | Pass  Total  Time
+Compiled: a wrong signature is refused |    7      7  1.2s
+Test Summary:                                          | Pass  Total  Time
+W-34: ODEFunction, a given Jacobian, the chunk at init |   11     11  2.0s
+Test Summary:                                      | Pass  Total  Time
+W-34: a callable model enters form B (ChainModels) |    5      5  1.8s
+Test Summary:                      | Pass  Total  Time
+W-34: the solution as a Trajectory |    6      6  0.4s
+Test Summary:                                                        | Pass  Total  Time
+W-34 move 5: the solution keeps its problem; DiffEqArray; plotpoints |   11     11  0.5s
+Test Summary:                                                             | Pass  Total  Time
+symbolic access (move 4): names from the problem's `sys`, by any provider |    3      3  0.2s
+Test Summary:                                                           | Pass  Total  Time
+symbolic access in a callback (move 4): the integrator it sees, by name |    3      3  0.1s
+Test Summary:                                                                   | Pass  Total  Time
+W-34 move 2: callbacks at the problem's types, the integrator view's operations |   11     11  1.0s
+Test Summary:                                                    | Pass  Total  Time
+R2: optional properties of a problem's function (open issue 119) |   11     11  0.5s
+Test Summary:                               | Pass  Total  Time
+R2: the system object back (census item 12) |    5      5  0.3s
+Test Summary:                                                                         | Pass  Total  Time
+R2: a problem's callbacks, tstops, initialize, the crossing's direction (items 14-16) |    9      9  0.2s
+Test Summary:                               | Pass  Total  Time
+R2: parameters saved by callbacks (item 13) |    3      3  0.0s
+Test Summary:                    | Pass  Total  Time
+R2: init, step!, solve! (item 2) |   16     16  0.5s
+Test Summary:                       | Pass  Total  Time
+Nonlinear problems (census item 11) |   19     19  1.4s
+Test Summary:                      | Pass  Total  Time
+Steady states (SteadyStateProblem) |    5      5  0.7s
+Test Summary:   | Pass  Total  Time
+R3: remake (S7) |    9      9  0.3s
+Test Summary:                     | Pass  Total  Time
+R3: dense output (open issue 117) |   22     22  0.1s
+Test Summary:                 | Pass  Total  Time
+R3: the solution's idxs forms |    5      5  0.2s
+Test Summary:                          | Pass  Total  Time
+open issue 118: a system's own indices |   22     22  1.5s
+Test Summary:             | Pass  Total  Time
+W-96: Tsit5's interpolant |    6      6  0.5s
+Test Summary:                                               | Pass  Total  Time
+W-96: events on Tsit5's interpolant, the states saved there |   10     10  0.2s
+Test Summary:                     | Pass  Total  Time
+W-96: a discrete callback's saves |    6      6  0.1s
+Test Summary:                                       | Pass  Total  Time
+TraitDifferentialEquations: no casts without effect |    1      1  0.1s
+Test Summary:                                                               | Pass  Total  Time
+TraitDifferentialEquations: no pair of trait methods without a joint method |    2      2  1.4s

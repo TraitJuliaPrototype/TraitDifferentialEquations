@@ -19,6 +19,7 @@ Tests on the unified build (dated):
 |---|---|---|---|
 | 2026-11-08 | `unified` 350c5b1c59, TraitWorld d897223 | 32 testsets pass, 3 checks broken (C-54) | `logs/unified/test-9.log` (each file run on its own), `logs/unified/test-final.log` (`Pkg.test`) |
 | 2026-11-08 | `unified` ef93ff7844 (W-128's build B2: C-54 for `X{T}`), TraitWorld c4f9f99 | 32 testsets pass, none broken: the function is kept `Dynamic` by default; Rodas5 with a chunk size enters the problem's plain function (the core problem carries it) | `logs/unified/test-b2.log` (`Pkg.test`) |
+| 2026-11-10 | `unified` 36b653bb3b, TraitWorld 048c44e; the top module a trait module (E-357) | 34 testsets pass, none broken | `logs/unified/test-front-trait-module.log` |
 
 Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 711484a23e with TraitWorld (the commit in this repository's log). A problem is any type that implements `ODEProblemTrait`; TDE's own `ODEProblem` is the canonical one; `solve(prob, alg)` is the one entry point. The test suite passes; the scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3. This file keeps its own dated results below: "Checked in W-2", "Measured in session 29", and the numbers of sessions 23–27 under "History (before the facts compiler)".
 
