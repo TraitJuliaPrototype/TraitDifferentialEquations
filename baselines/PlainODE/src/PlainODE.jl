@@ -11,7 +11,7 @@ The other routes of TraitDifferentialEquations, written the same way (session 30
 - a problem type with the fields `u0`, `tspan` and `p` that adds a method to `PlainODE.rhs!` (and
   optionally `jacobian!`): the solver is specialized on the problem's type, as it is compiled for
   the implementing type there;
-- `compiled_for(f)`: the function passed unwrapped, so the solver specializes on it (the plain
+- `specialized(f)`: the function passed unwrapped, so the solver specializes on it (the plain
   equivalent of `Compiled`; nothing checks the signature but the call itself);
 - callback types that add methods to `PlainODE.condition` and `PlainODE.affect!`;
 - Rodas5, with the Jacobian by ForwardDiff at a library-owned tag (two FunctionWrappers) for a
@@ -22,7 +22,7 @@ using FunctionWrappers: FunctionWrapper
 import ForwardDiff
 using PrecompileTools: @compile_workload
 using LinearAlgebra: lu!, ldiv!
-export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, compiled_for, rhs!, jacobian!, condition, affect!,
+export ODEProblem, solve, Tsit5, Rodas5, DiscreteCallback, gradient, specialized, rhs!, jacobian!, condition, affect!,
        ContinuousCallback, TypedDiscreteCallback, TypedContinuousCallback, event_condition, event_affect!, add_tstop!, terminate!,
        interp!, solve_typed
 
@@ -104,11 +104,12 @@ struct ModelRHS{M}
 end
 (r::ModelRHS)(du, u, p, t) = (rhs!(r.m, du, u, t); nothing)
 
-"A function the caller asks to be compiled into the solver (the plain form of `compiled_for`)."
+"A function the caller asks to be compiled into the solver (the plain form of the trait form's `compiled_for`;
+that name is a cast on the unified build and cannot be defined)."
 struct Compiled{F}
     f::F
 end
-compiled_for(f) = Compiled(f)
+specialized(f) = Compiled(f)
 primal(x::Float64) = x
 primal(x::AbstractFloat) = Float64(x)
 primal(x::ForwardDiff.Dual) = primal(ForwardDiff.value(x))
@@ -686,7 +687,7 @@ _solve(f::Compiled, u0::Vector, tspan, alg::Tsit5, p, cbs, opts, evs = ()) = sol
 
 E-158's typed control: the callbacks as typed records (`TypedDiscreteCallback`, `TypedContinuousCallback`)
 in tuples, so the driver is compiled for each set of callbacks; the function as `solve`'s (a
-FunctionWrapper, or itself under `compiled_for`).
+FunctionWrapper, or itself under `specialized`).
 """
 function solve_typed(@nospecialize(prob::ODEProblem), alg::Tsit5; callbacks::Tuple = (), events::Tuple = (), kw...)
     u0 = _promote_state(prob.u0, prob.p)

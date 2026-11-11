@@ -33,7 +33,8 @@ const ENTRIES = Tuple{Symbol,String}[
     (:both, "const r0, rp = [1.0, 0.0, 0.0], [0.2, 0.2, 5.7]; prob = ODEProblem(rossler!, r0, (0.0, 10.0), rp)"),
     (:both, "s2 = solve(prob, Tsit5()); check(\"new function\", s2.retcode === :Success); result(\"s2\", s2.u[end])"),
     # the same function in compiled mode: the same values
-    (:both, "s2c = solve(ODEProblem(compiled_for(rossler!), r0, (0.0, 10.0), rp), Tsit5()); check(\"compiled mode\", s2c.u == s2.u)"),
+    (:trait, "s2c = solve(ODEProblem(compiled_for(rossler!), r0, (0.0, 10.0), rp), Tsit5()); check(\"compiled mode\", s2c.u == s2.u)"),
+    (:plain, "s2c = solve(ODEProblem(specialized(rossler!), r0, (0.0, 10.0), rp), Tsit5()); check(\"compiled mode\", s2c.u == s2.u)"),
     # a new problem type at the prompt
     (:both, "struct Rossler; u0::Vector{Float64}; tspan::Tuple{Float64,Float64}; p::Vector{Float64}; end"),
     (:both, "Lib.rhs!(m::Rossler, du::Vector{Float64}, u::Vector{Float64}, t::Float64) = (p = m.p; du[1] = -u[2] - u[3]; du[2] = u[1] + p[1] * u[2]; du[3] = p[2] + u[3] * (u[1] - p[3]); nothing)"),
@@ -68,7 +69,8 @@ const ENTRIES = Tuple{Symbol,String}[
     (:both, "s9 = solve(ODEProblem(rossler!, Float32.(r0), (0.0, 10.0), Float32.(rp)), Tsit5()); check(\"Float32\", eltype(s9.u[end]) === Float32); result(\"s9\", s9.u[end])"),
     # an edit of a function already used, in both modes: the next solve uses the new definition
     (:both, "rossler!(du, u, p, t) = (du[1] = -u[2] - u[3]; du[2] = u[1] + p[1] * u[2]; du[3] = p[2] + u[3] * (u[1] - 2 * p[3]); nothing)"),
-    (:both, "s10 = solve(prob, Tsit5()); s10c = solve(ODEProblem(compiled_for(rossler!), r0, (0.0, 10.0), rp), Tsit5())"),
+    (:trait, "s10 = solve(prob, Tsit5()); s10c = solve(ODEProblem(compiled_for(rossler!), r0, (0.0, 10.0), rp), Tsit5())"),
+    (:plain, "s10 = solve(prob, Tsit5()); s10c = solve(ODEProblem(specialized(rossler!), r0, (0.0, 10.0), rp), Tsit5())"),
     (:both, "s10ref = solve(Rossler(r0, (0.0, 10.0), [0.2, 0.2, 11.4]), Tsit5())"),
     (:both, "check(\"edited function, dynamic\", s10.u == s10ref.u); check(\"edited function, compiled\", s10c.u == s10.u); result(\"s10\", s10.u[end])"),
     (:both, "println(\"SESSION \", nfail[] == 0 ? \"passed\" : \"FAILED (\$(nfail[]))\")"),

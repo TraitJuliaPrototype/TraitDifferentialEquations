@@ -69,7 +69,7 @@ SciML today recompiles the solver for every new callback closure (0.84–0.96 s 
 
 **Baselines:**
 - **(a) stock SciML:** OrdinaryDiffEqTsit5, OrdinaryDiffEqRosenbrock and ForwardDiff;
-- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `compiled_for`, problem types (fields `u0`, `tspan`, `p`) and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
+- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `specialized(f)` (PlainODE's name for it: `compiled_for` is a cast and cannot be defined), problem types (fields `u0`, `tspan`, `p`) and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
 
 ## Measurements
 
@@ -193,7 +193,7 @@ With `Dynamic` too, such a function is refused at the bound with `TraitBoundErro
 
 **The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 9 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
 
-**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `compiled_for` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the implementation.
+**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `specialized` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the implementation.
 
 ## Measured in session 29
 
