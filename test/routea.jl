@@ -108,7 +108,7 @@ end
         @implement ODEProblemTrait BadRet
     end)
     @test e isa TraitWorld.ImplementError
-    @test occursin("rhs!'s method", errtext(e)) && occursin("infers its result as Vector{Float64}, wider than the declared Nothing", errtext(e))
+    @test occursin("rhs!'s method", errtext(e)) && occursin("infers its result as Vector{Float64}, outside the declared Nothing", errtext(e))
     # (c) in the block form: the same check
     e = thrown(quote
         struct BlockBad; u0::Vector{Float64}; tspan::Tuple{Float64,Float64}; p::Float64; end
