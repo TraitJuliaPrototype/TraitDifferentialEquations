@@ -59,7 +59,7 @@ callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take the
 # the constructor with a trait argument (traits §8.2): a cast at this call decides the function's attribute,
 # else `Callable`'s default; the signature's variables come from `u0` and `p`. Open on purpose (§7.3): an
 # adapter, it stores the function with its attribute
-@open function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P;
+@unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P;
                     @nospecialize(callback = nothing)) where {T,P}
     k = keep(f)
     return _front(k isa Dynamic ? unwrap(k) : k, k isa Dynamic, u0, tspan, p, callback)

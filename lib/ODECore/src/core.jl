@@ -453,8 +453,8 @@ end
 no_jacobian(J, u, p, t) = nothing
 rhs!(prob::ODEProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (prob.f(du, u, t)::Nothing; nothing)
 "The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state, by finite differences otherwise."
-# open on purpose (traits §7.3): it calls the function at the library's duals, a second signature it is kept at (§9)
-@open jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,J} =
+# unbounded on purpose (traits §7.3): it calls the function at the library's duals, a second signature it is kept at (§9)
+@unbounded jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,J} =
     J === CoreNoJacobian ? (prob.ad ? _ad_jacobian!(prob.f, Jm, u, t, Val(DUAL_CHUNK)) : fd_jacobian!(prob, Jm, u, t)) :
     (prob.jac(Jm, u, t)::Nothing; nothing)
 "The user's function partially evaluated, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
@@ -519,8 +519,8 @@ struct CoreProblem{T,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T
 end
 core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
 "The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
-# open on purpose, as `jacobian!`: the function at the duals
-@open core_jacobian!(m::CoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,J} =
+# unbounded on purpose, as `jacobian!`: the function at the duals
+@unbounded core_jacobian!(m::CoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,F,J} =
     J === CoreNoJacobian ? (m.ad ? _ad_jacobian!(m.f, Jm, u, t, Val(DUAL_CHUNK)) : fd_jacobian!(m, Jm, u, t)) :
     (m.jac(Jm, u, t)::Nothing; nothing)
 "The problem's right-hand side, whatever the problem: its `rhs!`, or the core's partially evaluated function."
@@ -544,7 +544,7 @@ _member_checked(prob::ODEProblemTrait) = nothing
 # the problem's own `rhs!` and `jacobian!`, kept `Dynamic` at the core's signatures (traits §7.7), so the core's
 # type names neither the problem's type nor its parameters. Open on purpose (traits §7.3): it stores the problem in
 # records whose parameter takes its type
-@open core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
+@unbounded core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
     CoreProblem(Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
                 Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false, UserFunction(nothing))
 

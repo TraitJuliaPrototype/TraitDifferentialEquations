@@ -132,8 +132,8 @@ struct NonlinearProblem{T,P,F<:Callable{NLSig{T},Nothing},J<:Callable{NLJacSig{T
 end
 residual!(prob::NonlinearProblem{T}, r::Vector{T}, u::Vector{T}) where {T} = (prob.f(r, u)::Nothing; nothing)
 "The Jacobian: the given one; else by ForwardDiff's duals for a `Float64` state; else by finite differences."
-# open on purpose (traits §7.3): it calls the residual at the library's duals, a second signature it is kept at (§9)
-@open nl_jacobian!(prob::NonlinearProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,P,F,J} =
+# unbounded on purpose (traits §7.3): it calls the residual at the library's duals, a second signature it is kept at (§9)
+@unbounded nl_jacobian!(prob::NonlinearProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,P,F,J} =
     J === NLNoJacobian ? (prob.ad ? _nl_ad_jacobian!(prob.f, Jm, u, Val(DUAL_CHUNK)) : nl_fd_jacobian!(prob, Jm, u)) :
     (prob.jac(Jm, u)::Nothing; nothing)
 @implement NonlinearProblemTrait{T,P} NonlinearProblem{T,P,F,J} where {T,P,F,J}
@@ -228,8 +228,8 @@ end
 "The residual at `u`, into `r`."
 nl_residual!(m::NLCoreProblem{T}, r::Vector{T}, u::Vector{T}) where {T} = (m.f(r, u)::Nothing; nothing)
 "The core's Jacobian at `u`: the given one; else by the duals for a `Float64` state; else by finite differences."
-# open on purpose, as `nl_jacobian!`
-@open nl_core_jacobian!(m::NLCoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,F,J} =
+# unbounded on purpose, as `nl_jacobian!`
+@unbounded nl_core_jacobian!(m::NLCoreProblem{T,F,J}, Jm::Matrix{T}, u::Vector{T}) where {T,F,J} =
     J === NLNoJacobian ? (m.ad ? _nl_ad_jacobian!(m.f, Jm, u, Val(DUAL_CHUNK)) : nl_fd_jacobian!(m, Jm, u)) :
     (m.jac(Jm, u)::Nothing; nothing)
 _residual!(prob, r, u) = residual!(prob, r, u)
