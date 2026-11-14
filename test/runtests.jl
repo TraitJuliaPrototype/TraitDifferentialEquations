@@ -125,6 +125,7 @@ include("w96.jl")
 # a cast or a carried attribute at a parameter no trait types has no effect (open issue 162)
 @testset "TraitDifferentialEquations: no casts without effect" begin
     @test isempty(detect_unused_casts(TraitDifferentialEquations))
+    @test isempty(detect_kept_storage(TraitDifferentialEquations.ODECore))     # no `keep` into storage typed by a trait (traits §7.8)
 end
 
 # two traits' operations of one function need a joint method (traits §6.3; open issue 174)

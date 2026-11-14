@@ -6,7 +6,7 @@
 #     as a `Dynamic{Callable{…}}` (`Callable`'s default), so the solver compiles once per element and
 #     parameter type, whatever the function; under `compiled_for(f)` the function itself, and the
 #     solver compiles per function;
-#   - callbacks are entered at the problem's types at a solver's `init` and kept with their attribute
+#   - callbacks are entered at the problem's types at a solver's `init` and stored by their trait
 #     (`Vector{Callback{U, T, P}}`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
 #     so a new callback compiles nothing in the solver unless the caller casts it with `compiled_for`,
 #     and a callback reads `integ.p` at the problem's parameter type;
@@ -610,7 +610,7 @@ event_initialize!(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{I
 
 A solver's `init` step for callbacks: the user's callbacks entered at the problem's types `(U, Float64, P)`.
 A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions kept at the signatures
-(`FunctionCallback`, `FunctionEventCallback`), each with its attribute; a value of a callback type is kept as it is, refused
+(`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is stored as it is, refused
 if it does not conform at these types. The integrator keeps the two vectors.
 """
 function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
@@ -631,11 +631,11 @@ end
 # a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which sees
 # through casts and kept values; a value of both traits is a continuous one
 _enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::EventCallback{U,T,P}) where {U,T,P} =
-    (push!(c, keep(cb)); nothing)
+    (push!(c, cb); nothing)
 _enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::Callback{U,T,P}) where {U,T,P} =
-    (push!(d, keep(cb)); nothing)
+    (push!(d, cb); nothing)
 _enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::All{EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
-    (push!(c, keep(cb)); nothing)
+    (push!(c, cb); nothing)
 
 """
     ParamIntegrator{U, T, P}
@@ -772,11 +772,11 @@ function enter_step_callbacks(cbs::Vector{Any}, ::Type{U}) where {U}
 end
 
 _enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepEvent{U,T}) where {U,T} =
-    (push!(c, keep(cb)); nothing)
+    (push!(c, cb); nothing)
 _enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepCallback{U,T}) where {U,T} =
-    (push!(d, keep(cb)); nothing)
+    (push!(d, cb); nothing)
 _enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::All{StepEvent{U,T}, StepCallback{U,T}}) where {U,T} =
-    (push!(c, keep(cb)); nothing)
+    (push!(c, cb); nothing)
 
 "The callbacks' `initialize` at a solver's `init`, at the initial state (SciML's `initialize_callbacks!`): the continuous ones, then the discrete ones."
 function initialize_step_callbacks!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T}
@@ -1041,7 +1041,7 @@ end
 """
 Tsit5's state between steps, with its problem and the driver's state (SciML's integrator keeps both). Its type
 holds the element type and the core's problem type, nothing else: the parameters stay in the outer layer
-(W-63), and the callbacks are kept with their attributes (`Vector{StepCallback{…}}`), so their types do not
+(W-63), and the callbacks are stored by their trait (`Vector{StepCallback{…}}`), so their types do not
 reach it. `uprev`, `kprev` and `tprev` are the last accepted step's start, for `interp!`.
 """
 mutable struct Tsit5Integrator{T,M}
