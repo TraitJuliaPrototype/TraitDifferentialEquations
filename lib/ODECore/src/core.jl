@@ -282,67 +282,41 @@ ones they are given.
 end
 
 
-# The front end's reads of a function's or a problem's optional properties: the trait's, or the default.
-# - TDE's own records (`ODEProblem`, `ODEFunction`) are read by their fields, and a function (a closure, a generic
-#   function) that declares none of the traits takes the default without entering a bound: a bound's entry is
-#   compiled per argument type, which would compile the front end again for every new function.
-# - A kept value (a function kept at `Callable`) is read through its kept trait only: at a bound its held object does
-#   not conform to, TraitWorld raises `TraitBoundError` where a plain value reaches the ordinary fallback (traits §5.5,
-#   §6.5; a candidate open issue, E-239). Casts (`compiled_for`, `with_dynamic`) are seen through, at the bound.
-"Whether `x` is a kept value (`Dynamic{X}`)."
-_iskept(@nospecialize(x)) = x isa Dynamic
-"Whether the front end reads `x`'s property `X` by the bound: not for a function that does not declare `X`, nor a kept value of another trait."
-_by_bound(@nospecialize(x), @nospecialize(X::Type)) =
-    !((x isa Function || _iskept(x)) && !(x isa X))
+# The front end's reads of a function's or a problem's optional properties: the trait's, or the default. By
+# dispatch, so that code which knows the value's type knows the answer: TDE's own records (`ODEProblem`,
+# `ODEFunction`) by their fields, a member of the property's trait by its operation, anything else the default.
 "The system object `x` carries, or `nothing`."
-Base.@nospecializeinfer function _system(@nospecialize(x))
-    x === nothing && return nothing
-    x isa ODEProblem && return getfield(x, :sys)
-    x isa ODEFunction && return getfield(x, :sys)
-    return _by_bound(x, HasSystem) ? getsystem(x) : nothing
-end
+_system(@nospecialize(x)) = nothing
+_system(x::HasSystem) = getsystem(x)
 """
 The mass matrix `x` carries (`HasMassMatrix`), or the identity. A callable object (not a function: a closure's
 captured variables are its fields) or a problem with a `mass_matrix` property other than the identity that does
 not declare the trait (SciML's convention reads the property) is refused: solving it as an ODE would ignore the
 mass matrix.
 """
-Base.@nospecializeinfer function _mass_matrix(@nospecialize(x))
-    x isa ODEProblem && return getfield(x, :mass_matrix)
-    x isa ODEFunction && return getfield(x, :mass_matrix)
-    return _by_bound(x, HasMassMatrix) ? _mass_matrix_of(x) : I
-end
-_mass_matrix_of(x::HasMassMatrix) = mass_matrix(x)
-Base.@nospecializeinfer function _mass_matrix_of(@nospecialize(x))
-    !(x isa Function) && hasproperty(x, :mass_matrix) && !_is_identity(getproperty(x, :mass_matrix)) && throw(ArgumentError(string(
-        "a value of type ", nameof(typeof(x)), " has a property `mass_matrix` other than the identity but does not ",
-        "implement `HasMassMatrix`: declare it (`@implement HasMassMatrix …`), so that the solvers see it")))
+_mass_matrix(x::HasMassMatrix) = mass_matrix(x)
+function _mass_matrix(x)
+    x isa Function && return I
+    hasproperty(x, :mass_matrix) && !_is_identity(getproperty(x, :mass_matrix)) && _undeclared_mass_matrix(x)
     return I
 end
+Base.@nospecializeinfer @noinline _undeclared_mass_matrix(@nospecialize(x)) = throw(ArgumentError(string(
+    "a value of type ", nameof(typeof(x)), " has a property `mass_matrix` other than the identity but does not ",
+    "implement `HasMassMatrix`: declare it (`@implement HasMassMatrix …`), so that the solvers see it")))
 "Whether a mass matrix is the identity: then the problem is an ODE."
 _is_identity(M::UniformScaling) = M == I
 _is_identity(M::AbstractMatrix) = M == I
 _is_identity(@nospecialize(M)) = false
 "The Jacobian prototype `x` carries (`HasJacobianPrototype`), or `nothing`."
-Base.@nospecializeinfer function _jac_prototype(@nospecialize(x))
-    x isa ODEProblem && return getfield(x, :jac_prototype)
-    x isa ODEFunction && return getfield(x, :jac_prototype)
-    return _by_bound(x, HasJacobianPrototype) ? _jac_prototype_of(x) : nothing
-end
-_jac_prototype_of(x::HasJacobianPrototype) = jac_prototype(x)
-_jac_prototype_of(x) = nothing
+_jac_prototype(@nospecialize(x)) = nothing
+_jac_prototype(x::HasJacobianPrototype) = jac_prototype(x)
 "The callbacks a problem keeps (`HasCallbacks`), or none."
-Base.@nospecializeinfer function _problem_callbacks(@nospecialize(x))
-    x isa ODEProblem && return getfield(x, :callbacks)
-    return _by_bound(x, HasCallbacks) ? _problem_callbacks_of(x) : Any[]
-end
-_problem_callbacks_of(x::HasCallbacks) = problem_callbacks(x)
-_problem_callbacks_of(x) = Any[]
+_problem_callbacks(@nospecialize(x)) = Any[]
+_problem_callbacks(x::HasCallbacks) = problem_callbacks(x)
 "A system's names, where it provides them (`IndexProvider{Symbol}`), kept `Dynamic`; else `nothing`."
-Base.@nospecializeinfer _names(@nospecialize(s)) = s === nothing || !_by_bound(s, IndexProvider) ? nothing : _names_of(s)
+_names(@nospecialize(s)) = nothing
 # a system of another index type (`IndexProvider{I}`, open issue 118) has no names: its indices serve `getu`
-_names_of(s::IndexProvider{K}) where {K} = K === Symbol ? Dynamic{IndexProvider{Symbol}}(s) : nothing   # (`I` is LinearAlgebra's here)
-_names_of(s) = nothing
+_names(s::IndexProvider{K}) where {K} = K === Symbol ? Dynamic{IndexProvider{Symbol}}(s) : nothing   # (`I` is LinearAlgebra's here)
 
 # --- the signatures of plain functions --------------------------------------------------------
 
@@ -446,6 +420,7 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     sys::Any                                       # the system object, or nothing
     names::Union{Nothing,Dynamic{IndexProvider{Symbol}}}   # its names (move 4), where it provides them
     mass_matrix::Any                               # the identity, or the function's
+    mass_identity::Bool                            # whether it is the identity: then the problem is an ODE
     jac_prototype::Any                             # nothing, or the function's
     callbacks::Vector{Any}                         # the callbacks it keeps
 end
@@ -537,7 +512,7 @@ attribute (traits reference §7.4). For a problem type that implements `ODEProbl
 function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
     # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
     F <: Dynamic || _member_checked(prob)
-    return CoreProblem(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad, prob.fplain)
+    return CoreProblem{T,F,J}(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad, prob.fplain)
 end
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
@@ -545,8 +520,9 @@ _member_checked(prob::ODEProblemTrait) = nothing
 # type names neither the problem's type nor its parameters. Open on purpose (traits §7.3): it stores the problem in
 # records whose parameter takes its type
 @unbounded core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
-    CoreProblem(Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
-                Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false, UserFunction(nothing))
+    CoreProblem{T,Dynamic{Callable{CoreRHSSig{T},Nothing}},Dynamic{Callable{CoreJacSig{T},Nothing}}}(
+        Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
+        Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false, UserFunction(nothing))
 
 """
     DiscreteCallback(condition, affect!; initialize = no_initialize)
@@ -1218,19 +1194,25 @@ matrix other than the identity (`HasMassMatrix`, of the problem or of its functi
 algorithm takes one (`takes_mass_matrix`); solving the problem as an ODE would ignore it. A Jacobian
 prototype is a hint, not checked: a solver that does not use one computes the same Jacobian dense.
 """
-Base.@nospecializeinfer function check_properties(@nospecialize(prob), alg::ODEAlgorithm)
-    M = _mass_matrix(prob)
-    _is_identity(M) || takes_mass_matrix(alg) || throw(ArgumentError(string(
-        "the algorithm takes no mass matrix, and this problem has one other than the identity (",
-        summary(M), ", from its function's or its own `HasMassMatrix`): a DAE, which solving as an ODE would ",
-        "get wrong. Use an algorithm that takes mass matrices (`takes_mass_matrix`).")))
+function check_properties(prob, alg::ODEAlgorithm)
+    _has_identity_mass(prob) || takes_mass_matrix(alg) || _refuse_mass_matrix()
     return nothing
 end
+# TDE's own problem knows it from its construction, where the function's type is known
+_has_identity_mass(prob::ODEProblem) = getfield(prob, :mass_identity)
+_has_identity_mass(prob) = _is_identity(_mass_matrix(prob))::Bool
+@noinline _refuse_mass_matrix() = throw(ArgumentError(
+    "the algorithm takes no mass matrix, and this problem has one other than the identity (from its function's " *
+    "or its own `HasMassMatrix`): a DAE, which solving as an ODE would get wrong. Use an algorithm that takes " *
+    "mass matrices (`takes_mass_matrix`)."))
 "The callbacks of a solve: the problem's (`HasCallbacks`), then the ones given (SciML's `CallbackSet(prob.callback, callback)`)."
-Base.@nospecializeinfer function _all_callbacks(@nospecialize(prob), callbacks::Vector{Any})
-    pc = _problem_callbacks(prob)
-    return isempty(pc) ? callbacks : Any[pc..., callbacks...]
+function _all_callbacks(prob, callbacks::Vector{Any})
+    pc = _problem_callbacks(prob)::Vector{Any}
+    return isempty(pc) ? callbacks : vcat(pc, callbacks)
 end
+"A problem's system names, as its solution and integrator keep them: TDE's own problem keeps them from its construction."
+_problem_names(prob::ODEProblem, @nospecialize(sys)) = getfield(prob, :names)
+_problem_names(prob, @nospecialize(sys)) = _names(sys)::Union{Nothing,Dynamic{IndexProvider{Symbol}}}
 _no_saved(p::P) where {P} = P[]
 
 """
@@ -1244,12 +1226,14 @@ algorithm's driver (`solve_core`), which never sees the parameters' type. What d
 type is this function and the adapters: a few constructors and closures. With callbacks, the parameters are
 saved at the start and wherever a callback calls `save_discretes!`.
 """
-Base.@nospecializeinfer function solve_ode(@nospecialize(prob), alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
+# (the problem is not typed by its trait here: `core_problem` is no operation of it, and the problem's type is
+# the caller's; `with_problem` takes it at the trait)
+function solve_ode(prob, alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
     check_properties(prob, alg)
     m = core_problem(prob)
     cbs = _all_callbacks(prob, callbacks)
     sys = _system(prob)
-    names = _names(sys)
+    names = _problem_names(prob, sys)
     isempty(cbs) && return with_problem(solve_core(alg, m, cbs, opts), prob, sys, names, Float64[], _no_saved(prob.p))
     pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, names, true)
     return with_problem(solve_core(alg, m, adapt_callbacks!(pi, cbs), opts), prob, sys, names, pi.pt, pi.pu)
@@ -1262,12 +1246,12 @@ SciML's `init`: as `solve_ode`, but the solver's integrator at the start of the 
 `ODEStepper`'s) is returned in the outer layer's integrator, for `step!` and `solve!`. The integrator's type
 is `ParamIntegrator{Vector{T}, Float64, P}`, whatever the algorithm, the function and the callbacks.
 """
-Base.@nospecializeinfer function init_ode(@nospecialize(prob), alg::ODEStepper, callbacks::Vector{Any}, opts::SolverOptions)
+function init_ode(prob, alg::ODEStepper, callbacks::Vector{Any}, opts::SolverOptions)
     check_properties(prob, alg)
     m = core_problem(prob)
     cbs = _all_callbacks(prob, callbacks)
     sys = _system(prob)
-    pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, _names(sys), true)
+    pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, _problem_names(prob, sys), true)
     core = init_core(alg, m, isempty(cbs) ? cbs : adapt_callbacks!(pi, cbs), opts)
     return attach!(pi, core, prob)
 end

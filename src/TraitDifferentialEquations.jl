@@ -35,8 +35,9 @@ export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rod
 
 # the user's callbacks as given (`DiscreteCallback`, `ContinuousCallback`, values of callback types):
 # a solver's `init` enters them at the problem's types
-Base.@nospecializeinfer _cbs(@nospecialize(cb)) = cb === nothing ? Any[] : Any[cb]
-Base.@nospecializeinfer _cbs(@nospecialize(cbs::Union{Tuple,AbstractVector})) = Any[cb for cb in cbs]
+_cbs(::Nothing) = Any[]
+_cbs(cbs::Union{Tuple,AbstractVector}) = Any[cb for cb in cbs]
+_cbs(@nospecialize(cb)) = Any[cb]
 
 _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[], tstops = Float64[],
          dense = isempty(saveat)) =
@@ -53,32 +54,30 @@ type. Rodas5 takes `Float64` states and the problem's `jacobian!`, or with `Roda
 function at duals of a chunk picked from the state's length. The problem's callbacks (`ODEProblem(…; callback)`)
 come before `callback`; `tstops` are times the solver steps to exactly.
 
-This front end is neither specialized nor inferred on the problem's type, so a caller's code does
-not infer the solver again; behind it, a function barrier (`_solve`) is compiled per problem type,
-which calls the solver at that type.
+The front end is typed: a caller's code knows the solution's type, `ODESolution{T, P}`, which names neither
+the problem's type nor the algorithm's. What is compiled once is decided by the problem's function's attribute
+(`ODEProblem`), not by keeping the compiler from this code.
 """
-Base.@nospecializeinfer function solve(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...)
-    # a nonlinear algorithm: TraitNonlinearSolve's front end (SciML's one `solve` for every kind of problem)
-    _isnonlinear(alg) && return _solve_nonlinear(prob, alg, values(kw))
-    return _solve(prob, alg, _cbs(callback), _options(; kw...))          # any `ODEAlgorithm` (move 3)
-end
+solve(prob, alg; callback = nothing, kw...) = _solve(prob, alg, callback, values(kw))
+# by the algorithm's trait (SciML's one `solve` for every kind of problem); an algorithm of both traits counts as
+# nonlinear
+_solve(prob, alg::ODEAlgorithm, callback, kw::NamedTuple) = solve_ode(prob, alg, _cbs(callback), _options(; kw...))
+_solve(prob, alg::NonlinearAlgorithm, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
+_solve(prob, alg::All{ODEAlgorithm, NonlinearAlgorithm}, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
 """
 The forwarding to TraitNonlinearSolve: neither specialized nor inferred on the keywords, so a caller that infers `solve`
-at its keywords' types (an ODE solve) does not infer the nonlinear front end too.
+at its keywords' types does not infer the nonlinear front end too.
 """
 Base.@nospecializeinfer _solve_nonlinear(@nospecialize(prob), @nospecialize(alg), @nospecialize(kw::NamedTuple)) =
     TraitNonlinearSolve.solve(prob, alg; kw...)
-_solve(prob, alg, cbs, opts) = solve_ode(prob, alg, cbs, opts)
-# the front end chooses by the algorithm's trait and the problem's (TraitNonlinearSolve's bounded predicates)
-_isnonlinear(alg) = TraitNonlinearSolve.is_nonlinear_algorithm(alg)
-_isnonlinear_problem(prob) = TraitNonlinearSolve.is_nonlinear_problem(prob)
 """
-The default algorithm (move 3, check 4): the umbrella's own `solve`, Tsit5; for a nonlinear problem
-(`NonlinearProblemTrait`), the default polyalgorithm.
+The default algorithm (move 3, check 4): Tsit5; for a nonlinear problem (`NonlinearProblemTrait`), the
+default polyalgorithm. A problem of both traits counts as nonlinear.
 """
-Base.@nospecializeinfer solve(@nospecialize(prob); kw...) =
-    _isnonlinear_problem(prob) ? _solve_nonlinear(prob, TraitNonlinearSolve.NonlinearPolyalg(), values(kw)) :
-                                                     solve(prob, Tsit5(); kw...)
+solve(prob; kw...) = solve(prob, _default_algorithm(prob); kw...)
+_default_algorithm(prob::ODEProblemTrait) = Tsit5()
+_default_algorithm(prob::NonlinearProblemTrait) = TraitNonlinearSolve.NonlinearPolyalg()
+_default_algorithm(prob::All{ODEProblemTrait, NonlinearProblemTrait}) = TraitNonlinearSolve.NonlinearPolyalg()
 
 """
     init(prob, Tsit5(); callback = nothing, saveat, tstops, abstol, reltol, dtmax, maxiters) -> integrator
@@ -89,8 +88,7 @@ and `solve!(integ)`, with the keywords of `solve`. It is what callbacks see (`In
 `integ.t`, `integ.p`, `add_tstop!`, `terminate!`, `getstate`, `getsystem`. Any algorithm that can be stepped
 (`ODEStepper`: Tsit5, Rodas5).
 """
-Base.@nospecializeinfer init(@nospecialize(prob), @nospecialize(alg); @nospecialize(callback = nothing), kw...) =
-    init_ode(prob, alg, _cbs(callback), _options(; kw...))
+init(prob, alg::ODEStepper; callback = nothing, kw...) = init_ode(prob, alg, _cbs(callback), _options(; kw...))
 
 # --- gradients through `solve` (row 5) --------------------------------------------------------------
 

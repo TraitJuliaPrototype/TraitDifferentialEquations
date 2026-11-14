@@ -56,53 +56,74 @@ The function's optional properties are read here, from the `ODEFunction` or from
 `solve` and `init` refuse a mass matrix other than the identity for an algorithm that takes none. The
 callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take them before their own.
 """
+# The front end is typed: each method's result is a concrete `ODEProblem{T, P, F, J}` that its caller's code knows,
+# so a program that makes a problem and solves it is fully typed (traits §14). What is compiled once is decided by
+# the function's attribute, not by keeping the compiler from the code: under `Dynamic` the problem's type holds
+# `Dynamic{Callable{…}}`, one type for every function; under `compiled_for(f)` it holds the function's type.
+
 # the constructor with a trait argument (traits §8.2): a cast at this call decides the function's attribute,
-# else `Callable`'s default; the signature's variables come from `u0` and `p`. Open on purpose (§7.3): an
+# else `Callable`'s default; the signature's variables come from `u0` and `p`. Unbounded on purpose (§7.3): an
 # adapter, it stores the function with its attribute
-@unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P;
-                    @nospecialize(callback = nothing)) where {T,P}
-    k = keep(f)
-    return _front(k isa Dynamic ? unwrap(k) : k, k isa Dynamic, u0, tspan, p, callback)
+@unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P; callback = nothing) where {T,P}
+    return _problem_of(f, keep(f), _promote_state(_state(u0), p), _span(tspan), p, _callbacks(callback))
 end
 # without parameters: the function passed on with its attribute (traits §7.5)
-ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; @nospecialize(callback = nothing)) where {T} =
+ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
     ODEProblem(f, u0, tspan, nothing; callback)
-# a function that is no `Callable` at the state's type (its methods take other types): kept `Dynamic`, as by default
-Base.@nospecializeinfer ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing; @nospecialize(callback = nothing)) =
-    _front(f, true, u0, tspan, p, callback)
-# neither specialized nor inferred on the function: only the function itself is compiled, at its signature
-Base.@nospecializeinfer function _front(@nospecialize(f), dyn::Bool, u0::AbstractVector, tspan, p, @nospecialize(callback))
-    u = _promote_state(_state(u0), p)
-    ts = (Float64(tspan[1]), Float64(tspan[2]))
-    cbs = _callbacks(callback)
-    # a record's functions at `Callable`'s default (open issue 159)
-    f isa ODEFunction && return _problem(f.f, true, f.jac, u, ts, p, f.sys, f.mass_matrix, f.jac_prototype, cbs)
-    # a function or a model: its properties as `ODEFunction(f)` reads them, without a record per function type
-    return _problem(f, dyn, nothing, u, ts, p, _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
+# a function that is no `Callable` at the state's type (its methods take other types): kept `Dynamic`, as by default.
+# Not specialized on the function: the problem's type does not depend on it
+ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing; callback = nothing) =
+    _problem_of(f, Erased(f), _promote_state(_state(u0), p), _span(tspan), p, _callbacks(callback))
+"A function to keep `Dynamic` whatever the call: one that is no `Callable` at the state's type."
+struct Erased
+    f::Any
+    Erased(@nospecialize(f)) = new(f)
 end
+# a function or a model, with its attribute `k` (`keep`'s value): its properties are its own
+_problem_of(f, k, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
+    _problem(_core_function(k, p, u, nothing), _plain_function(k, p), core_no_jacobian, u, ts, p,
+             _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
+# SciML's record: its functions at `Callable`'s default, `Dynamic`, whatever the call (a cast on a function inside
+# the record does not reach here: open issue 159); its properties are the record's
+_problem_of(f::ODEFunction, k, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
+    _problem(_erased_function(f.f, p, u, f.jac), _plain_function(f.f, p, f.jac), _core_jacobian(f.jac, p, u), u, ts, p,
+             f.sys, f.mass_matrix, f.jac_prototype, cbs)
+_span(tspan) = (Float64(tspan[1]), Float64(tspan[2]))
 "The callbacks given to a problem, as a vector."
-Base.@nospecializeinfer _callbacks(@nospecialize(cb)) = cb === nothing ? Any[] : cb isa Union{Tuple,AbstractVector} ? Any[c for c in cb] : Any[cb]
-# the functions partially evaluated on the parameters (W-63) at the problem's bounds, which have no parameter
-# for the parameters' type, each with its attribute (`dyn`: `Dynamic`, else the function itself); the partially
-# evaluated function beside them, for a solver that enters it at its own chunk
-function _problem(@nospecialize(f), dyn::Bool, @nospecialize(jac), u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P,
-                  @nospecialize(sys), @nospecialize(mm), @nospecialize(jp), cbs::Vector{Any}) where {T,P}
-    # the Jacobian by duals: the one function, seen at the duals where it is needed, so a `Dynamic` one is kept at
-    # both signatures (traits §7.7, §9)
-    ad = T === Float64 && jac === nothing
-    X = ad ? All{Callable{CoreRHSSig{T},Nothing}, Callable{CoreDualSig{DUAL_CHUNK},Nothing}} : Callable{CoreRHSSig{T},Nothing}
-    r = _partial(f, p, dyn, X)
-    jk = jac === nothing ? core_no_jacobian : _partial(jac, p, true, Callable{CoreJacSig{T},Nothing})
-    # for a solver that picks its own dual chunk, the function at `Callable`'s default: a plain value
-    return ODEProblem(r, u0, tspan, p, jk, ad, UserFunction(jac === nothing && dyn ? PartialFn(f, p) : nothing),
-                      sys, _names(sys), mm, jp, cbs)
-end
-"""
-A user's function partially evaluated on the parameters, with its attribute: kept `Dynamic` at the core's
-trait `X` (a signature, or two: `All{…}`) where `dyn`, else the record itself, so the solver is compiled for it.
-"""
-Base.@nospecializeinfer _partial(@nospecialize(f), p, dyn::Bool, ::Type{X}) where {X} =
-    dyn ? Dynamic{X}(PartialFn(f, p)) : PartialFn(f, p)
+_callbacks(::Nothing) = Any[]
+_callbacks(cbs::Union{Tuple,AbstractVector}) = Any[c for c in cbs]
+_callbacks(@nospecialize(cb)) = Any[cb]
+
+# The core's trait for the right-hand side at a state type: with the Jacobian by duals (a `Float64` state, no
+# Jacobian given) the one function is seen at the duals too, so a `Dynamic` one is kept at both signatures
+# (traits §7.7, §9)
+_core_trait(::Vector{Float64}, ::Nothing) = All{Callable{CoreRHSSig{Float64},Nothing}, Callable{CoreDualSig{DUAL_CHUNK},Nothing}}
+_core_trait(::Vector{T}, jac) where {T} = Callable{CoreRHSSig{T},Nothing}
+_by_duals(::Vector{Float64}, ::CoreNoJacobian) = true
+_by_duals(::Vector, jk) = false
+# The function partially evaluated on the parameters (W-63) at the problem's bound, which has no parameter for the
+# parameters' type, with its attribute: a kept `Dynamic` is kept `Dynamic` at the core's trait, one type for every
+# function; a function kept compiled is the record itself, so the solver is compiled for it
+_core_function(k::Dynamic, p, u::Vector, jac) = _erased_function(unwrap(k), p, u, jac)
+_core_function(k::Erased, p, u::Vector, jac) = _erased_function(k.f, p, u, jac)
+_core_function(k, p, u::Vector, jac) = PartialFn(k, p)
+_erased_function(@nospecialize(f), p, u::Vector, jac) = Dynamic{_core_trait(u, jac)}(PartialFn(f, p))
+# for a solver that picks its own dual chunk, the function at `Callable`'s default as a plain value; `nothing`
+# where the function is kept compiled or a Jacobian is given
+_plain_function(k::Dynamic, p) = UserFunction(PartialFn(unwrap(k), p))
+_plain_function(k::Erased, p) = UserFunction(PartialFn(k.f, p))
+_plain_function(k, p) = UserFunction(nothing)
+_plain_function(@nospecialize(f), p, ::Nothing) = UserFunction(PartialFn(f, p))
+_plain_function(@nospecialize(f), p, jac) = UserFunction(nothing)
+# a given Jacobian, entered `Dynamic` at the core's signature; without one, the library's `core_no_jacobian`
+_core_jacobian(::Nothing, p, u::Vector) = core_no_jacobian
+_core_jacobian(@nospecialize(jac), p, u::Vector{T}) where {T} = Dynamic{Callable{CoreJacSig{T},Nothing}}(PartialFn(jac, p))
+# the problem, from its functions as it keeps them. The type's parameters are written out (traits §8.2): the
+# constructor that infers them takes its functions at `Callable`'s default
+_problem(r, fplain::UserFunction, jk, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P,
+         @nospecialize(sys), mm, @nospecialize(jp), cbs::Vector{Any}) where {T,P} =
+    ODEProblem{T,P,typeof(r),typeof(jk)}(r, u0, tspan, p, jk, _by_duals(u0, jk), fplain, sys,
+                                         _names(sys)::Union{Nothing,Dynamic{IndexProvider{Symbol}}}, mm, _is_identity(mm)::Bool, jp, cbs)
 
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
 _state(u0::AbstractVector{T}) where {T<:AbstractFloat} = Vector{T}(u0)      # Float32 states stay Float32 (row 6)
@@ -121,16 +142,20 @@ types, partially evaluated on the new parameters; the system object, the mass ma
 (unless `callback` is given) the callbacks are kept. The state takes the parameters' dual type, as in
 `ODEProblem`.
 """
-Base.@nospecializeinfer function remake(prob::ODEProblem; @nospecialize(u0 = prob.u0), @nospecialize(tspan = prob.tspan),
-                                        @nospecialize(p = prob.p), @nospecialize(callback = missing))
-    # the user's functions back from their partially evaluated forms, with their attributes
-    f, dyn = _user_function(getfield(prob, :f))   # the field as stored, not as a bound views it
-    jac = _jac_given(prob) ? _user_function(getfield(prob, :jac))[1] : nothing
+function remake(prob::ODEProblem; u0 = prob.u0, tspan = prob.tspan, p = prob.p, callback = missing)
     cbs = callback === missing ? copy(prob.callbacks) : _callbacks(callback)
     u = _promote_state(_state(u0), p)
-    return _problem(f, dyn, jac, u, (Float64(tspan[1]), Float64(tspan[2])), p, prob.sys, prob.mass_matrix, prob.jac_prototype, cbs)
+    k = getfield(prob, :f); kj = getfield(prob, :jac)     # the fields as stored, not as a bound views them
+    jac = _user_jacobian(kj)
+    return _problem(_again(k, p, u, jac), _plain_again(k, p, jac), _core_jacobian(jac, p, u), u, _span(tspan), p,
+                    prob.sys, prob.mass_matrix, prob.jac_prototype, cbs)
 end
+# the user's functions back from their partially evaluated forms, entered again with their attributes
+_again(k::Dynamic, p, u::Vector, jac) = _erased_function(unwrap(k).f, p, u, jac)
+_again(k::PartialFn, p, u::Vector, jac) = PartialFn(k.f, p)
+_plain_again(k::Dynamic, p, jac) = _plain_function(unwrap(k).f, p, jac)
+_plain_again(k::PartialFn, p, jac) = UserFunction(nothing)
+_user_jacobian(::CoreNoJacobian) = nothing
+_user_jacobian(kj::Dynamic) = unwrap(kj).f
 "Whether a problem was given a Jacobian (its kept Jacobian is not the library's `core_no_jacobian`)."
 _jac_given(::ODEProblem{T,P,F,J}) where {T,P,F,J} = J !== CoreNoJacobian
-"The user's function back from its partially evaluated form, and whether it was kept `Dynamic`."
-Base.@nospecializeinfer _user_function(@nospecialize(k)) = k isa Dynamic ? (unwrap(k).f, true) : (k.f, false)
