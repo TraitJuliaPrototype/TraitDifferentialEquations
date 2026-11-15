@@ -60,9 +60,9 @@ end
     m3 = lp()
     s3 = solve(m3, Rodas5(); callback = (Bounce(5.0), RaiseSigma(0.5, 12.0)))
     @test s3.retcode === :Success && m3.p.σ == 12.0
-    # a callback value reaches its vector by its bound, through casts and kept values (open issue 105)
+    # a callback value reaches its vector by its bound, as the wrapper and as the box (open issue 105; W-151)
     CB = TraitDifferentialEquations.ODECore.Callback{Vector{Float64}, Float64, typeof(m.p)}
-    for cb in (compiled_for(Bounce(5.0)), with_dynamic(Bounce(5.0)), Dynamic{CB}(Bounce(5.0)))
+    for cb in (compiled_for(Bounce(5.0)), Dynamic{CB}(Bounce(5.0)))
         @test solve(lp(), Tsit5(); callback = cb).u == sb.u
     end
     # a value of neither callback trait is refused, with the hint naming the bound (traits §5.5)

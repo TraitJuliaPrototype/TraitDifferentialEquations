@@ -15,7 +15,7 @@ solvers and its dual numbers.
 """
 module TraitNonlinearSolve
 using TraitWorld
-@trait_module
+@trait_module first_seen = false
 using ODECore
 using ODECore: LinearSolver, linfactor, DenseLU, FDual, DUAL_CHUNK, HasSystem, HasJacobianPrototype, getsystem,
                ODEFunction, ODEProblemTrait

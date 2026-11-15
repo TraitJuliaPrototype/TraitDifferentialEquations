@@ -7,7 +7,7 @@ edited for it. What it imports from the core below is what a solver package need
 """
 module TraitRodas
 using TraitWorld
-@trait_module
+@trait_module first_seen = false
 using ODECore
 # the solver API: the core's problem and its calls, the dual numbers the core keys its problems' functions
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator

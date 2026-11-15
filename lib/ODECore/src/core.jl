@@ -391,9 +391,9 @@ TDE's own problem, the canonical implementation of `ODEProblemTrait`: a plain ri
 `jac(J, u, p, t)` (SciML's split: the user's functions come in a plain record, `ODEFunction`, which
 has no parameter for `u`'s or `p`'s type; the problem has them). The problem keeps each function
 partially evaluated on its parameters (`PartialFn(f, p)`, W-63), at a parameter bounded by `Callable`
-at a signature without the parameters (traits reference §7.4), as its bound gives it: the record
-itself under `compiled_for(f)`, so the solver compiles per function; a `Dynamic{Callable{…}}`
-otherwise (`Callable`'s default, and `with_dynamic`), so the solver compiles once per state type,
+at a signature without the parameters, in the form the function was given (W-151): the wrapper,
+`Compiled(PartialFn(f, p))`, under `compiled_for(f)`, so the solver compiles per function; a box,
+`Dynamic{Callable{…}}`, otherwise (`Callable`'s default), so the solver compiles once per state type,
 whatever the function and the parameters:
 - `f::F` at `CoreRHSSig{T}`;
 - `ad`: whether the Jacobian is by dual numbers (a `Float64` state, no Jacobian given): then `f` is seen
@@ -557,36 +557,48 @@ no_initialize(u, t, integ) = nothing
 Base.@nospecializeinfer _affect(@nospecialize(a)) = a === nothing ?
     throw(ArgumentError("an affect of `nothing` is not taken: every crossing is an event (pass a function that does nothing)")) : a
 
-"A discrete callback as the integrator keeps it: its plain functions at the problem's types, in fields typed by `Callable`: called through the trait, compiled once."
-struct FunctionCallback{U,T,P}
-    cond::Callable{CondSig{U,T,P},Bool}
-    aff::Callable{AffectSig{U,T,P},Nothing}
-    init::Callable{CondSig{U,T,P},Nothing}
+"""
+A discrete callback as the integrator keeps it: its functions at the problem's types, each in the form it was given
+(open issue 159): a plain function boxed at its signature by the constructor's forwarder (`Callable`'s default), so
+one type serves every callback of plain functions; a function given as `compiled_for(f)` kept as the wrapper, so its
+calls are compiled for it.
+"""
+struct FunctionCallback{U,T,P,C<:Callable{CondSig{U,T,P},Bool},A<:Callable{AffectSig{U,T,P},Nothing},I<:Callable{CondSig{U,T,P},Nothing}}
+    cond::C
+    aff::A
+    init::I
 end
+@erasing FunctionCallback{U,T,P}(c::Callable{CondSig{U,T,P},Bool}, a::Callable{AffectSig{U,T,P},Nothing},
+                                 i::Callable{CondSig{U,T,P},Nothing}) where {U,T,P} =
+    FunctionCallback{U,T,P,typeof(c),typeof(a),typeof(i)}(c, a, i)
 condition(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
 affect!(cb::FunctionCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
 initialize!(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.init(u, t, integ); nothing)
-@implement Callback{U,T,P} FunctionCallback{U,T,P} where {U,T,P}
+@implement Callback{U,T,P} FunctionCallback{U,T,P,C,A,I} where {U,T,P,C,A,I}
 
-"A continuous callback as the integrator keeps it."
-struct FunctionEventCallback{U,T,P}
-    cond::Callable{CondSig{U,T,P},Float64}
-    aff::Callable{AffectSig{U,T,P},Nothing}
-    affneg::Callable{AffectSig{U,T,P},Nothing}
-    init::Callable{CondSig{U,T,P},Nothing}
+"A continuous callback as the integrator keeps it, its functions in the forms they were given."
+struct FunctionEventCallback{U,T,P,C<:Callable{CondSig{U,T,P},Float64},A<:Callable{AffectSig{U,T,P},Nothing},
+                             N<:Callable{AffectSig{U,T,P},Nothing},I<:Callable{CondSig{U,T,P},Nothing}}
+    cond::C
+    aff::A
+    affneg::N
+    init::I
 end
+@erasing FunctionEventCallback{U,T,P}(c::Callable{CondSig{U,T,P},Float64}, a::Callable{AffectSig{U,T,P},Nothing},
+                                      an::Callable{AffectSig{U,T,P},Nothing}, i::Callable{CondSig{U,T,P},Nothing}) where {U,T,P} =
+    FunctionEventCallback{U,T,P,typeof(c),typeof(a),typeof(an),typeof(i)}(c, a, an, i)
 event_condition(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
 event_affect!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.aff(integ); nothing)
 event_affect_neg!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.affneg(integ); nothing)
 event_initialize!(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.init(u, t, integ); nothing)
-@implement EventCallback{U,T,P} FunctionEventCallback{U,T,P} where {U,T,P}
+@implement EventCallback{U,T,P} FunctionEventCallback{U,T,P,C,A,N,I} where {U,T,P,C,A,N,I}
 
 """
     enter_callbacks(cbs, U, P) -> (discrete, continuous)
 
 A solver's `init` step for callbacks: the user's callbacks entered at the problem's types `(U, Float64, P)`.
-A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions kept at the signatures
-(`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is stored as it is, refused
+A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions at the signatures, each in the form
+it was given (`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is stored as it is, refused
 if it does not conform at these types. The integrator keeps the two vectors.
 """
 function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}

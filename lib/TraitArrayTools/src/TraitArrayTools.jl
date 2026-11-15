@@ -9,7 +9,7 @@ whatever produced the trajectory. A plotting package needs this package, not the
 """
 module TraitArrayTools
 using TraitWorld
-@trait_module
+@trait_module first_seen = false
 export Trajectory, times, state, at, DiffEqArray, plotpoints, linear_at
 """
     Trajectory{U, T}

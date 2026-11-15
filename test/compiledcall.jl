@@ -52,7 +52,24 @@ end
     for f in (oop, ret!)
         e = caught(() -> solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5()))
         @test f === oop ? e isa MethodError : (e isa TypeError && occursin("nothing", lowercase(sprint(showerror, e))))
+        # the wrapper of a function with no method at the declared arguments is a member of `Callable` by its own call
+        # method, so it reaches the forwarder, whose box refuses it where the problem is made (W-151)
         e = caught(() -> solve(ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0), Tsit5()))
-        @test f === oop ? e isa MethodError : e isa TypeError
+        @test e isa TypeError
+        f === oop && @test caught(() -> ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0)) isa TypeError
     end
+end
+
+@testset "W-151: the problem keeps the function in the form it is given" begin
+    # a plain function is boxed by the constructor's forwarder; `compiled_for(f)` is the wrapper (open issue 186)
+    F(prob) = typeof(prob).parameters[3]
+    J(prob) = typeof(prob).parameters[4]
+    @test F(ODEProblem(lorenz!, U0, (0.0, 1.0), P0)) <: Dynamic
+    @test F(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0)) <: Compiled
+    @test F(ODEProblem(lorenz!, U0, (0.0, 1.0), P0)) === F(ODEProblem((du, u, p, t) -> nothing, U0, (0.0, 1.0), P0))
+    # a record made before the signature is known keeps each function as given (open issue 159)
+    jac!(Jm, u, p, t) = (Jm .= 0.0; nothing)
+    pr = ODEProblem(ODEFunction(lorenz!; jac = compiled_for(jac!)), U0, (0.0, 1.0), P0)
+    @test F(pr) <: Dynamic && J(pr) <: Compiled
+    @test solve(pr, Rodas5()).retcode === :Success
 end

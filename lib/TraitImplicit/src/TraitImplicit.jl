@@ -7,7 +7,7 @@ its stages solved by any `NonlinearSolver` (Newton by default), which solves its
 """
 module TraitImplicit
 using TraitWorld
-@trait_module
+@trait_module first_seen = false
 using ODECore: CoreProblem, CoreSolution, SolverOptions, ODEAlgorithm, NonlinearSolver, NLCache, nlcache, nlstage!, Newton
 import ODECore: solve_core
 export ImplicitEuler

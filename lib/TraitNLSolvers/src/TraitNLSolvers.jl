@@ -7,7 +7,7 @@ core's traits; the implicit methods do not know it.
 """
 module TraitNLSolvers
 using TraitWorld
-@trait_module
+@trait_module first_seen = false
 using ODECore: NonlinearSolver, NLCache, LinearSolver, DenseLU, newton_stage!
 import ODECore: nlcache, nlstage!
 export SimplifiedNewton
