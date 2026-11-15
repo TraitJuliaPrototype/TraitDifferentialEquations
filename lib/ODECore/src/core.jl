@@ -568,7 +568,7 @@ struct FunctionCallback{U,T,P,C<:Callable{CondSig{U,T,P},Bool},A<:Callable{Affec
     aff::A
     init::I
 end
-@erasing FunctionCallback{U,T,P}(c::Callable{CondSig{U,T,P},Bool}, a::Callable{AffectSig{U,T,P},Nothing},
+FunctionCallback{U,T,P}(c::Callable{CondSig{U,T,P},Bool}, a::Callable{AffectSig{U,T,P},Nothing},
                                  i::Callable{CondSig{U,T,P},Nothing}) where {U,T,P} =
     FunctionCallback{U,T,P,typeof(c),typeof(a),typeof(i)}(c, a, i)
 condition(cb::FunctionCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)
@@ -584,7 +584,7 @@ struct FunctionEventCallback{U,T,P,C<:Callable{CondSig{U,T,P},Float64},A<:Callab
     affneg::N
     init::I
 end
-@erasing FunctionEventCallback{U,T,P}(c::Callable{CondSig{U,T,P},Float64}, a::Callable{AffectSig{U,T,P},Nothing},
+FunctionEventCallback{U,T,P}(c::Callable{CondSig{U,T,P},Float64}, a::Callable{AffectSig{U,T,P},Nothing},
                                       an::Callable{AffectSig{U,T,P},Nothing}, i::Callable{CondSig{U,T,P},Nothing}) where {U,T,P} =
     FunctionEventCallback{U,T,P,typeof(c),typeof(a),typeof(an),typeof(i)}(c, a, an, i)
 event_condition(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = cb.cond(u, t, integ)

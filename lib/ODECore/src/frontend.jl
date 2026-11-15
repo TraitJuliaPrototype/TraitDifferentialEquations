@@ -59,14 +59,14 @@ callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take the
 # so a program that makes a problem and solves it is fully typed (traits §14). What is compiled once is decided by
 # the value: a box, `Dynamic{Callable{…}}`, one type for every function; a wrapper, `Compiled{…}`, the function's type.
 
-# the constructor with a trait argument (traits §8.2): the method at the kept forms, and the forwarder that boxes a
-# plain function (`@erasing`, W-151); the signature's variables come from `u0` and `p`. Unbounded on purpose (§7.3):
+# the constructor with a trait argument (traits §8.2): the definition makes the method at the kept forms and the
+# forwarder that boxes a plain function (W-160); the signature's variables come from `u0` and `p`. Unbounded on purpose (§7.3):
 # an adapter, it stores the function in the form it is given
-@erasing @unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P; callback = nothing) where {T,P}
+@unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P; callback = nothing) where {T,P}
     return _problem_of(f, unwrap(f), _promote_state(_state(u0), p), _span(tspan), p, _callbacks(callback))
 end
 # without parameters: the kept form passed on
-@erasing ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
+ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
     ODEProblem(f, u0, tspan, nothing; callback)
 # a function that is no `Callable` at the state's type (its methods take other types): boxed at the core, a wrapper
 # kept compiled. Not specialized on the function: the problem's type does not depend on it

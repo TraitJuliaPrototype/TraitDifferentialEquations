@@ -79,13 +79,13 @@ SymbolCache(vars::AbstractVector) = SymbolCache(collect(Symbol, vars), Symbol[])
 end
 @noinline _noname(kind::String, sym::Symbol) = throw(ArgumentError("no $kind named :$sym"))
 "The value of state variable `sym`."
-@erasing function getstate(v::All{ValueProvider{U, P}, IndexProvider{Symbol}}, sym::Symbol) where {U, P}
+function getstate(v::All{ValueProvider{U, P}, IndexProvider{Symbol}}, sym::Symbol) where {U, P}
     i = variable_index(v, sym)
     i === nothing && _noname("state variable", sym)
     return state_values(v)[i]
 end
 "The value of parameter `sym`."
-@erasing function getparam(v::All{ValueProvider{U, P}, IndexProvider{Symbol}}, sym::Symbol) where {U, P}
+function getparam(v::All{ValueProvider{U, P}, IndexProvider{Symbol}}, sym::Symbol) where {U, P}
     i = parameter_index(v, sym)
     i === nothing && _noname("parameter", sym)
     return parameter_values(v)[i]
@@ -124,7 +124,7 @@ The getter of index `idx` in system `sys` (an `IndexProvider{I}`): a function `g
 or a parameter's by its position; otherwise the system's `observed` getter. A vector of indices that is not
 itself an `I` gives the vector of its indices' values.
 """
-@erasing function getter(ip::IndexProvider{I}, idx) where {I}
+function getter(ip::IndexProvider{I}, idx) where {I}
     idx isa I || return _getter_other(ip, idx)
     i = variable_index(ip, idx)
     i === nothing || return StateGetter(i)
@@ -134,7 +134,7 @@ itself an `I` gives the vector of its indices' values.
     g === nothing && throw(ArgumentError(string("the system has no variable, parameter or observed value ", repr(idx))))
     return g
 end
-@erasing function _getter_other(ip::IndexProvider{I}, idx) where {I}
+function _getter_other(ip::IndexProvider{I}, idx) where {I}
     if idx isa AbstractVector
         gs = Callable[]                  # a loop, not a comprehension: a closure would capture `ip` (traits §7.3)
         for i in idx
