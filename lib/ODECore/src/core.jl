@@ -38,6 +38,10 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        initialize!, event_initialize!, event_affect_neg!, no_initialize,
        CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!, remake,
        Interpolant, interpolate, Tsit5Steps, push_step!, dense_step, kept_interpolant
+# the integrator's step interface, which the solver packages implement for their integrators: public, so
+# that another package's integrator may implement it (an owner-only function's methods are its owner's;
+# traits §12.2, open issue 212)
+public step_tstop!, step_interp!, step_dt_reset!, step_terminate!
 
 # --- the traits --------------------------------------------------------------------------
 
