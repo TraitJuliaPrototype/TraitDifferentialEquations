@@ -44,19 +44,20 @@ end
     RS = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}
     @test solve(ODEProblem(Dynamic{Callable{RS,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u ==
           solve(ODEProblem(lorenz!, U0, (0.0, 1.0), P0), Tsit5()).u
-    # a `Dynamic` at a signature the function has no method for is refused when made; a constructor takes no cast
-    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!)) isa TypeError
-    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa TypeError
-    # `Dynamic` (the default) and `Compiled` alike: a function with no method at the arguments fails at its first
-    # call; one whose result is not the declared `Nothing` fails the result's check (traits §9)
+    # a `Dynamic` at a signature the function has no method for is refused when made, with the MethodError a call at
+    # the signature would raise (traits §9)
+    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(lorenz!)) isa MethodError
+    @test caught(() -> Dynamic{Callable{Tuple{Vector{Float64}},Nothing}}(compiled_for(lorenz!))) isa MethodError
+    # `Dynamic` (the default) and `Compiled` alike: a function with no method at the arguments is refused where the
+    # problem is made, with the MethodError of that call; one whose result is not the declared `Nothing` fails the
+    # result's check, the box at its first call, the wrapper where it enters (traits §9; GT-24 (b))
     for f in (oop, ret!)
         e = caught(() -> solve(ODEProblem(f, U0, (0.0, 1.0), P0), Tsit5()))
         @test f === oop ? e isa MethodError : (e isa TypeError && occursin("nothing", lowercase(sprint(showerror, e))))
-        # the wrapper of a function with no method at the declared arguments is a member of `Callable` by its own call
-        # method, so it reaches the forwarder, whose box refuses it where the problem is made (W-151)
+        f === oop && @test caught(() -> ODEProblem(f, U0, (0.0, 1.0), P0)) isa MethodError
         e = caught(() -> solve(ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0), Tsit5()))
-        @test e isa TypeError
-        f === oop && @test caught(() -> ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0)) isa TypeError
+        @test f === oop ? e isa MethodError : e isa TypeError
+        @test caught(() -> ODEProblem(compiled_for(f), U0, (0.0, 1.0), P0)) isa (f === oop ? MethodError : TypeError)
     end
 end
 

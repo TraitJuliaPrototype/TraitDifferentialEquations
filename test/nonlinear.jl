@@ -33,6 +33,7 @@ struct Relax
     target::Vector{Float64}
 end
 (m::Relax)(du, u, p, t) = (du .= p[1] .* (m.target .- u); nothing)
+@implement Callable Relax
 @implement HasSystem Relax begin
     system(m) = m
 end

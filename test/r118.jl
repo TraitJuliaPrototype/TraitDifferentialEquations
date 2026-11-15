@@ -13,6 +13,7 @@ struct Chain
     n::Int
 end
 (m::Chain)(du, u, p, t) = (du .= -p[1] .* u; nothing)
+@implement Callable Chain
 @implement HasSystem Chain begin
     system(m) = m
 end
@@ -26,6 +27,7 @@ struct VChain
     n::Int
 end
 (m::VChain)(du, u, p, t) = (du .= -p[1] .* u; nothing)
+@implement Callable VChain
 @implement HasSystem VChain begin
     system(m) = m
 end

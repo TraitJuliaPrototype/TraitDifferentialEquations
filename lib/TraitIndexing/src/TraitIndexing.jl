@@ -107,16 +107,19 @@ struct StateGetter
     i::Int
 end
 (g::StateGetter)(u, p, t) = u[g.i]
+@implement Callable StateGetter          # a callable type that is no `Function` (traits §9)
 "A parameter's getter: `p[i]`."
 struct ParamGetter
     i::Int
 end
 (g::ParamGetter)(u, p, t) = p[g.i]
+@implement Callable ParamGetter          # a callable type that is no `Function` (traits §9)
 "The getter of a vector of indices: each index's getter, their values in a vector."
 struct VectorGetter
     gs::Vector{Callable}
 end
 (g::VectorGetter)(u, p, t) = [f(u, p, t) for f in g.gs]
+@implement Callable VectorGetter          # a callable type that is no `Function` (traits §9)
 """
     getter(sys, idx) -> Callable
 
@@ -156,6 +159,8 @@ the value at that state, those parameters and that time.
 """
 struct Getter
     f::Callable                      # g(u, p, t), kept before the state's types are known
+    # every function is a `Callable` (traits §9): one constructor, where Julia's defaults are two
+    Getter(f::Callable) = new(f)
 end
 (g::Getter)(u, p, t) = g.f(u, p, t)
 (g::Getter)(v) = _read(v, g.f)

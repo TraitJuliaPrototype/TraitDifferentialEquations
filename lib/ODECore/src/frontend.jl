@@ -26,6 +26,9 @@ Base.@nospecializeinfer ODEFunction(@nospecialize(f); @nospecialize(jac = nothin
                                     @nospecialize(sys = _system(f)), @nospecialize(jac_prototype = _jac_prototype(f))) =
     ODEFunction(f, jac, mass_matrix, sys, jac_prototype)
 (f::ODEFunction)(du, u, p, t) = f.f(du, u, p, t)
+# a callable type that is no `Function` joins `Callable` by its declaration (traits §9): `ODEProblem` takes it at
+# its `Callable` argument, as it takes a function
+@implement Callable ODEFunction{F,TJ,TMM} where {F,TJ,TMM}
 @implement HasMassMatrix ODEFunction{F,TJ,TMM} where {F,TJ,TMM} begin
     mass_matrix(f) = f.mass_matrix
 end
@@ -68,19 +71,14 @@ end
 # without parameters: the kept form passed on
 ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
     ODEProblem(f, u0, tspan, nothing; callback)
-# a function that is no `Callable` at the state's type (its methods take other types): boxed at the core, a wrapper
-# kept compiled. Not specialized on the function: the problem's type does not depend on it
-ODEProblem(@nospecialize(f), u0::AbstractVector, tspan, p = nothing; callback = nothing) =
-    _problem_of(f, _object(f), _promote_state(_state(u0), p), _span(tspan), p, _callbacks(callback))
 "The object a kept form holds, or the value itself."
 _object(@nospecialize(f)) = f
 _object(f::Union{Dynamic,Compiled}) = unwrap(f)
-# a function or a model in the form `k` it was given (a box, a wrapper; a plain value at the fallback): its
-# properties are the object's own
+# a function or a model in the form `k` it was given (a box, a wrapper): its properties are the object's own
 _problem_of(k, f, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
     _problem(_core_function(k, p, u, nothing), _plain_function(k, p), core_no_jacobian, u, ts, p,
              _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
-# SciML's record, boxed or wrapped as a whole or given at the fallback: its functions in the forms the record holds
+# SciML's record (a `Callable` by its declaration), boxed or wrapped as a whole: its functions in the forms the record holds
 # them (open issue 159: `ODEFunction(f; jac = compiled_for(j))` keeps `j` compiled); its properties are the record's
 _problem_of(k, f::ODEFunction, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
     _problem(_core_function(f.f, p, u, f.jac), _plain_function(f.f, p, f.jac), _core_jacobian(f.jac, p, u), u, ts, p,
@@ -99,8 +97,8 @@ _by_duals(::Vector{Float64}, ::CoreNoJacobian) = true
 _by_duals(::Vector, jk) = false
 # The function partially evaluated on the parameters (W-63) at the problem's bound, which has no parameter for the
 # parameters' type, in the form it was given: a box is boxed again at the core's trait, one type for every function;
-# a wrapper wraps the partially evaluated function, so the solver is compiled for it; a plain function (the
-# fallback, a record's) is boxed
+# a wrapper wraps the partially evaluated function, so the solver is compiled for it; a plain function (a record's)
+# is boxed
 _core_function(k::Compiled, p, u::Vector, jac) = Compiled(PartialFn(unwrap(k), p))
 _core_function(@nospecialize(f), p, u::Vector, jac) = _erased_function(_object(f), p, u, jac)
 _erased_function(@nospecialize(f), p, u::Vector, jac) = Dynamic{_core_trait(u, jac)}(PartialFn(f, p))

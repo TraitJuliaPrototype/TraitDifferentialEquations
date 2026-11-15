@@ -8,6 +8,7 @@ struct MModel
     M::Any
 end
 (m::MModel)(du, u, p, t) = (du .= -u; nothing)
+@implement Callable MModel                 # a callable struct joins `Callable` by its declaration
 @implement HasMassMatrix MModel begin
     mass_matrix(m) = m.M
 end
@@ -19,11 +20,12 @@ struct OnlySolve end
 @implement ODEAlgorithm OnlySolve begin
     solve_core(a, m, callbacks, opts) = TraitDifferentialEquations.ODECore.solve_core(Tsit5(), m, callbacks, opts)
 end
-"A callable with SciML's `mass_matrix` property and no declaration."
+"A callable with SciML's `mass_matrix` property, declared a `Callable` and not a `HasMassMatrix`."
 struct Undeclared
     mass_matrix::Matrix{Float64}
 end
 (m::Undeclared)(du, u, p, t) = (du .= -u; nothing)
+@implement Callable Undeclared
 
 @testset "R2: optional properties of a problem's function (open issue 119)" begin
     sing = [1.0 0.0; 0.0 0.0]

@@ -60,6 +60,7 @@ Base.@nospecializeinfer NonlinearFunction(@nospecialize(f); @nospecialize(jac = 
                                           @nospecialize(jac_prototype = ODECore._jac_prototype(f))) =
     NonlinearFunction(f, jac, sys, jac_prototype)
 (f::NonlinearFunction)(r, u, p) = f.f(r, u, p)
+@implement Callable NonlinearFunction{F,TJ} where {F,TJ}          # a callable type that is no `Function` (traits §9)
 @implement HasSystem NonlinearFunction{F,TJ} where {F,TJ} begin
     system(f) = f.sys
 end
@@ -73,6 +74,7 @@ struct NLPartial{F,P}
     p::P
 end
 (r::NLPartial)(a, u) = r.f(a, u, r.p)
+@implement Callable NLPartial{F,P} where {F,P}          # a callable type that is no `Function` (traits §9)
 "An ODE right-hand side `f(du, u, p, t)` (or its Jacobian `jac(J, u, p, t)`) at a fixed time, partially evaluated on the parameters: `(a, u) -> f(a, u, p, t)`."
 struct AtTime{F,P}
     f::F
@@ -80,27 +82,32 @@ struct AtTime{F,P}
     t::Float64
 end
 (r::AtTime)(a, u) = r.f(a, u, r.p, r.t)
+@implement Callable AtTime{F,P} where {F,P}          # a callable type that is no `Function` (traits §9)
 "A problem type's own right-hand side at a fixed time (a problem that implements `ODEProblemTrait`)."
 struct ProblemAtTime{M}
     m::M
     t::Float64
 end
 (r::ProblemAtTime)(a, u) = ODECore.rhs!(r.m, a, u, r.t)
+@implement Callable ProblemAtTime{M} where {M}          # a callable type that is no `Function` (traits §9)
 "Its Jacobian at that time."
 struct ProblemJacAtTime{M}
     m::M
     t::Float64
 end
 (r::ProblemJacAtTime)(J, u) = ODECore.jacobian!(r.m, J, u, r.t)
+@implement Callable ProblemJacAtTime{M} where {M}          # a callable type that is no `Function` (traits §9)
 "A problem type's own residual and Jacobian, partially evaluated on the problem (for the core)."
 struct ProblemResidual{M}
     m::M
 end
 (r::ProblemResidual)(a, u) = residual!(r.m, a, u)
+@implement Callable ProblemResidual{M} where {M}          # a callable type that is no `Function` (traits §9)
 struct ProblemNLJac{M}
     m::M
 end
 (r::ProblemNLJac)(J, u) = nl_jacobian!(r.m, J, u)
+@implement Callable ProblemNLJac{M} where {M}          # a callable type that is no `Function` (traits §9)
 "No Jacobian given: by the duals for a `Float64` state, by finite differences otherwise (never called)."
 nl_no_jacobian(J, u) = nothing
 # kept as the wrapper, a value of its own type, so that a problem's `J` names it and `nl_jacobian!` folds on it:

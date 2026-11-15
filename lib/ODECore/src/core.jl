@@ -367,16 +367,19 @@ struct PartialFn{F,P}
     p::P
 end
 (r::PartialFn)(a, u, t) = r.f(a, u, r.p, t)
+@implement Callable PartialFn{F,P} where {F,P}          # a callable type that is no `Function` (traits §9)
 "A problem type's own `rhs!`, partially evaluated on the problem (a problem that implements `ODEProblemTrait` itself)."
 struct ProblemRHS{M}
     m::M
 end
 (r::ProblemRHS)(du, u, t) = rhs!(r.m, du, u, t)
+@implement Callable ProblemRHS{M} where {M}          # a callable type that is no `Function` (traits §9)
 "A problem type's own `jacobian!` (its default: finite differences of its `rhs!`), partially evaluated on the problem."
 struct ProblemJac{M}
     m::M
 end
 (r::ProblemJac)(J, u, t) = jacobian!(r.m, J, u, t)
+@implement Callable ProblemJac{M} where {M}          # a callable type that is no `Function` (traits §9)
 "No Jacobian given at the core: by the duals, else by finite differences (never called)."
 core_no_jacobian(J, u, t) = nothing
 const CoreNoJacobian = typeof(core_no_jacobian)
