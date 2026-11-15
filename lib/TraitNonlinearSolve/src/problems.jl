@@ -103,7 +103,10 @@ end
 (r::ProblemNLJac)(J, u) = nl_jacobian!(r.m, J, u)
 "No Jacobian given: by the duals for a `Float64` state, by finite differences otherwise (never called)."
 nl_no_jacobian(J, u) = nothing
-const NLNoJacobian = typeof(nl_no_jacobian)
+# kept as the wrapper, a value of its own type, so that a problem's `J` names it and `nl_jacobian!` folds on it:
+# given plain, a struct's default outer constructor boxes it as `Callable`'s default (traits §7.8)
+const NL_NO_JACOBIAN = Compiled(nl_no_jacobian)
+const NLNoJacobian = typeof(NL_NO_JACOBIAN)
 
 # a user's function partially evaluated, as a plain record (a kept function: its object); `_nlproblem` keeps it at
 # `Callable`'s default, `Dynamic` (the front end takes no cast: open issue 159)
@@ -208,7 +211,7 @@ _steady(prob::ODEProblemTrait{T,P}, t::Float64, @nospecialize(sys), @nospecializ
 function _nlproblem(@nospecialize(r), @nospecialize(jr), u0::Vector{T}, p::P, @nospecialize(sys), @nospecialize(jp)) where {T,P}
     ad = T === Float64 && jr === nothing
     X = ad ? All{Callable{NLSig{T},Nothing}, Callable{NLDualSig{DUAL_CHUNK},Nothing}} : Callable{NLSig{T},Nothing}
-    jk = jr === nothing ? nl_no_jacobian : Dynamic{Callable{NLJacSig{T},Nothing}}(jr)
+    jk = jr === nothing ? NL_NO_JACOBIAN : Dynamic{Callable{NLJacSig{T},Nothing}}(jr)
     return NonlinearProblem(Dynamic{X}(r), u0, p, jk, ad, sys, jp)
 end
 
