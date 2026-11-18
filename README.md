@@ -1,21 +1,45 @@
 # TraitDifferentialEquations
 
-ODE solvers written in the trait world: the first demonstrator that the trait world works for a real, large library, measured against stock SciML and against the same code written without traits.
+ODE solvers written with traits, with SciML's interface: `ODEFunction`, `ODEProblem`, `solve`, `init`, `remake`, callbacks, symbolic access and gradients. A problem, an algorithm, a callback, an integrator and a solution are traits, so a package adds a problem type, a solver or a callback type by a membership. The solver's code is compiled once per state and parameter type, not per user function, unless the caller asks for code per function.
 
-## On the unified build (branch `unified`, W-104)
+## The packages
 
-This branch follows the design under "traits are abstract types" on Julia's unified build (`julia-unified`, branch `unified`), with TraitWorld's branch `unified`. The sections below describe the earlier build (branches `w34`, `w96`).
+The umbrella `TraitDifferentialEquations` (`src/`) re-exports the packages under `lib/`, as DifferentialEquations.jl does:
+- **`ODECore`:** the core. The traits `ODEProblemTrait{T, P}`, `IntegratorView{U, T, P}`, `Callback{U, T, P}`, `EventCallback{U, T, P}`, `StepView`, `StepCallback`, `StepEvent`, `Interpolant{U, T}`, `CoreIntegrator`, `HasMassMatrix`, `HasJacobianPrototype`, `HasCallbacks`, `ODEAlgorithm`, `ODEStepper <: ODEAlgorithm`, `LinearSolver`, `NLCache`, `NonlinearSolver`; the front end (`ODEFunction`, `ODEProblem`, the problem kept by the solution); Tsit5 with its own interpolant; the drivers (`solve_ode`, `init_ode`, `step!`, `solve!`).
+- **`TraitRodas`:** Rodas5 with its Jacobian by duals, a solver package over the core.
+- **`TraitLinSolvers`, `TraitNLSolvers`, `TraitImplicit`:** a linear solver, a nonlinear solver and an implicit method, each knowing only the core's traits.
+- **`TraitIndexing`:** symbolic access, SymbolicIndexingInterface's part: `IndexProvider{I}`, `HasSystem`, `ValueProvider{U, P}`, `SeriesProvider{U, P}`; `getu`, `getstate`, `getparam`, `observed`.
+- **`TraitArrayTools`:** `Trajectory{U, T}`, `DiffEqArray`, `plotpoints`, RecursiveArrayTools' part.
+- **`TraitNonlinearSolve`:** `NonlinearProblemTrait{T, P}` and `NonlinearAlgorithm`, an open set of solvers (`NewtonRaphson`, `TrustRegion`, `NonlinearPolyalg`); `NonlinearProblem`, `SteadyStateProblem`.
 
-- **The front end is typed** (2026-11-14, E-387; on `unified` 21c9b33e39 with TraitWorld 2072e75): `ODEProblem`, `remake`, `solve`, `init` and the outer layer (`solve_ode`, `init_ode`) return types their callers know; no `@nospecializeinfer` keeps the compiler from them. What is compiled once is decided by the function's attribute: under `Callable`'s default the problem's type holds `Dynamic{Callable{…}}`, one type for every function; under `compiled_for(f)`, and in a closed build, it holds the function's type. The suite passes (34 test sets). The session of `experiments/implementation/w135/apps/ode.jl` costs 1.33 s where it cost 1.25 s. The program under `--trim=safe`: 50 errors where there were 122, in the solver core's callbacks, Rodas5 and a sort (the design repository's open issue 184). Logs: `../experiments/implementation/w104/README.md`.
-- **Values carry, by type** (2026-11-15, W-151, stage 1 of the next iteration; TraitWorld 6f86b4e): `ODEProblem` and the callbacks' records are written with `@erasing` (TraitWorld's prototype of D-1): a plain function is boxed by the forwarder, `compiled_for(f)` (bound from `TraitWorld.ByType`) is the wrapper `Compiled`, and the problem's `F` records which; no `keep`, no `Erased`; a record's functions each in its own form (open issue 159); every trait module `first_seen = false`. Some lines below describe the cast and `keep` and wait for stage 4.
-- **How to run:** `../julia-unified/julia --project=. -e 'using Pkg; Pkg.test()'` (offline: `JULIA_PKG_OFFLINE=true`).
-- **What changed:** `@trait_module` before a module's first method; intersections as `All{…}`; a kept value is the value itself, stored with `keep`; `Dynamic{X}` where code is compiled once (a callback's view of the integrator, a problem's function); `Solvable` by `ldiv!`; the workloads run while the images are built.
-  - `ODEProblem(f, u0, tspan, p)` takes `f` as a trait argument, `Callable{RHSSig{P, T}, Nothing}` with `T` and `P` from `u0` and `p`, and keeps it (traits §8.2): a cast at that call decides. A function inside an `ODEFunction` or a callback takes `Callable`'s default, `Dynamic` (open issue 159).
-  - A function whose Jacobian is by duals is kept at both signatures, `Dynamic{All{Callable{CoreRHSSig{T}, Nothing}, Callable{CoreDualSig{8}, Nothing}}}`; the methods that call it at the duals are `@unbounded`.
-  - `IntegratorView{U, T, P} <: (HasProperty{:ps, ParameterView{P}}, HasSystem, ValueProvider{U, P}, IndexProvider{Symbol})`: a callback's `Dynamic` view reads the parameters by name (`integ.ps[:σ]`, the integrator's own `getproperty`, C-32), the system, the values and the names.
-- **Known gaps:** A cast inside `ODEFunction` is refused by lowering (L-56) and would not reach the problem (open issue 159). The solution's `at` asserts its result at two run-time sites (open issue 157). The ambiguity report warns for `_read` at `ODESolution`, a family member of both `ValueProvider` and `SeriesProvider` (compiler C-29).
+Beside them:
+- `examples/LorenzModels`, `examples/ChainModels`: user packages with a problem type, callback types and a callable model of their own.
+- `baselines/PlainODE`, `baselines/PlainLorenzModels`: the same code without traits, the control.
 
-Tests on the unified build (dated):
+## How it uses the design
+
+- **The user's function is erased by default.** `ODEProblem(f, u0, tspan, p)` boxes a plain function, `Dynamic{Callable{…}}`, so the solver is compiled once per state and parameter type. `ODEProblem(compiled_for(f), …)` passes the wrapper, and the solver is compiled for `f`. The problem keeps the form given; so do the callbacks' records (`lib/ODECore/src/frontend.jl`, `src/core.jl`).
+- **Boxes where code is compiled once:** a callback sees the integrator as a `Dynamic{IntegratorView{U, T, P}}`; the step callbacks see a `Dynamic{StepView}`; the integrator keeps its core as a `Dynamic{CoreIntegrator}`; a problem's names are a `Dynamic{IndexProvider{Symbol}}`.
+- `IndexProvider` erases by default (`@default_dynamic`, `lib/TraitIndexing`).
+- The tests bind the wrapper's function with `using TraitWorld.ByType: compiled_for` (`test/runtests.jl`).
+- Not yet on the design's one way to erase: `kept_interpolant` keeps a solver's steps with `keep` (`lib/ODECore/src/core.jl`); `Rodas5`'s docstring describes the cast `with_dynamic(ls)` (`lib/TraitRodas/src/rodas5.jl`); every trait module writes the module option `first_seen = false` (`src/TraitDifferentialEquations.jl` and each package under `lib/`). These are recorded as deviations T-127 and T-128 of the traits reference.
+
+## Running
+
+From the workspace root:
+
+```sh
+source env.sh
+julia-next/julia --project=TraitDifferentialEquations -e 'using Pkg; Pkg.test()'
+```
+
+- `test/runtests.jl` includes the files of the other pieces (callbacks, the integrator view, nonlinear problems, symbolic indices, the interpolant).
+- The scripted session, the same steps with the trait library and with the plain one, compared by their `RESULT` lines: `scripts/session.jl trait|plain`, with `JULIA_LOAD_PATH="scripts/env:@stdlib"`, from this directory (the script's head gives the commands).
+- `scripts/rows.jl`, `scripts/baseline.jl`, `scripts/errors.jl`, `scripts/pirate.jl`, `scripts/runtime.jl`: the measurements of `HISTORY.md`.
+
+## Results
+
+The current numbers, each against plain Julia or Python, are in the design repository's `writeup/design/evidence.md`. The suite's last result is in its `writeup/state.md` §3; on `julia-next` the suite has 35 testsets.
 
 | Date | Build | Result | Log |
 |---|---|---|---|
@@ -24,281 +48,7 @@ Tests on the unified build (dated):
 | 2026-11-08 | `unified` ef93ff7844 (W-128's build B2: C-54 for `X{T}`), TraitWorld c4f9f99 | 32 testsets pass, none broken: the function is kept `Dynamic` by default; Rodas5 with a chunk size enters the problem's plain function (the core problem carries it) | `logs/unified/test-b2.log` (`Pkg.test`) |
 | 2026-11-10 | `unified` 36b653bb3b, TraitWorld 048c44e; the top module a trait module (E-357) | 34 testsets pass, none broken | `logs/unified/test-front-trait-module.log` |
 
-Status (2026-10-21): **built around a problem trait** (W-2), on julia-1.13 711484a23e with TraitWorld (the commit in this repository's log). A problem is any type that implements `ODEProblemTrait`; TDE's own `ODEProblem` is the canonical one; `solve(prob, alg)` is the one entry point. The test suite passes; the scripted session (`scripts/session.jl trait|plain`) gives the same `RESULT` lines for the trait and the plain library. **The current numbers** are in the design repository's [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §2–3. This file keeps its own dated results below: "Checked in W-2", "Measured in session 29", and the numbers of sessions 23–27 under "History (before the facts compiler)".
+## The design
 
-**How it is built (keys):**
-- **`ODEProblemTrait{T, P}`:** declared fields `u0::Vector{T}`, `tspan`, `p::P`; operations `rhs!(prob, du, u, t)` and `jacobian!(prob, J, u, t)` (default: finite differences of `rhs!`). The solver is compiled for what the bound sees: the problem's type.
-- **`ODEFunction(f; jac, mass_matrix, sys, jac_prototype)`,** SciML's plain record of the user's functions (branch `w34`). It has no parameter for the state's or the parameters' type; the problem enters its functions at its bounded parameters. A function's optional properties are traits on its type (`HasMassMatrix`, `HasSystem`, `HasJacobianPrototype`): the record's defaults read them, the problem keeps them, and `solve` and `init` refuse a mass matrix other than the identity for an algorithm that takes none (all of TDE's solvers).
-- **TDE's `ODEProblem{T, P, F, J}`** (`ODEProblem(f, u0, tspan, p)`, or `ODEProblem(ODEFunction(f; jac), …)`), the canonical implementation: `rhs!` calls its function `f(du, u, p, t)`, kept at struct parameters bounded by `Callable` (`F <: Callable{RHSSig{P, T}, Nothing}`; traits reference §7.4), so the constructor applies the bound and the caller's cast:
-  - `Dynamic{Callable{RHSSig{P, T}, Nothing}}` by default (`Callable`'s): `F` is the same type for every function, so the solver compiles once per state and parameter type, never per function;
-  - under `ODEProblem(compiled_for(f), …)` the function itself: the solver compiles for `f`, with `f` inferred into it, and its result still checked at every call. For every state and parameter type, Rodas5 and gradients included.
-  - **One function, seen at the duals where it is needed** (TraitWorld W-81; traits reference §5.8, §6.5; E-210): for a `Float64` state without a given Jacobian, `jacobian!` passes the problem's function to a bounded function at the library's duals, `_ad_jacobian!(f::Callable{CoreDualSig{N}, Nothing}, …, ::Val{N}) where {N}`, in chunks of 8 columns; the kept function is checked there (a method at the duals with a `Nothing` result) and seen with its attribute. The chunk is fixed, so it is no part of the problem's type.
-  - A given Jacobian is kept at `J <: Callable{JacSig{P, T}, Nothing}` (branch `w34`); without one, `J` is the library's `no_jacobian`, so `jacobian!` folds on it. The function as given is kept beside (`rhs_function`, an operation of the trait with the default `nothing`).
-  - **The chunk per problem** (branch `w34`): `Rodas5(chunk_size = 0)` sees the problem's one function at its `init` at the duals of a chunk picked from the state's length (`DualJacobian{N, FD}`, `FD` bounded by `Callable{CoreDualSig{N}, Nothing}`), so the driver is compiled per chunk, not the problem. `Rodas5()` keeps the problem's `jacobian!`.
-  - Callbacks are entered at the problem's types at a solver's `init` and kept with their attribute (`Vector{Callback{U, T, P}}`): `Dynamic` by default, `compiled_for(f)` persists.
-  - The state keeps its element type, or takes the parameters' dual type for a gradient in `p`, as SciML promotes it.
-- **A problem type of one's own** implements `rhs!` (and `jacobian!` if it can do better) and has the declared fields: `@implement ODEProblemTrait MyProblem`. The solver compiles for it, in the image of the package that declares the implementation (`examples/LorenzModels`: `LorenzProblem{T}` with its own buffer and Jacobian, its parameters a mutable `LorenzParams{T}`, workload in the package). Callbacks see its `p` as `integ.p`.
-- **`solve(prob, alg; callback, saveat, abstol, reltol, dtmax, maxiters)`:** a front end neither specialized nor inferred on the problem's type (`@nospecializeinfer`), so a caller's code does not infer the solver again, and behind it a function barrier compiled per problem type.
-- **`Trajectory{U, T}`** (branch `w34`, `lib/TraitArrayTools`, RecursiveArrayTools' stand-in): `times`, `state`, `at`; `DiffEqArray` and `ODESolution{T, P}` conform. A solver returns the core's `CoreSolution{T}`; the outer layer makes `ODESolution{T, P}`, which keeps its problem as `sol.prob::Kept{ODEProblemTrait{T, P}}`, so its type names the state's element type and the parameters' type, never the function, the problem type or the solver. `sol(τ)` is `at(sol, τ)`: by the solver's own interpolant where the solve kept its steps (`dense`, the default without `saveat`), else linear between the saved states. The interpolant is an open set, as the solvers are (open issue 117, my choice by the user's rule "more expressive is principled"): `Interpolant{U, T}` with `interpolate(ip, τ)`, implemented by each solver's record of its steps (`Tsit5Steps` for Tsit5, Tsit5's own free fourth-order interpolant, OrdinaryDiffEq's `Tsit5Interp`; TraitRodas' `Rodas5Steps`, Rodas5's own interpolant; each solver's `saveat` and event location use the same), kept by the solution as `Kept{Interpolant{U, T}}`, with no type parameter added. `sol(τ; idxs)` is `sol(τ, idxs)`: `Int` and `Symbol` (the problem's names) by position, any other index through the system's own indices (`getu`, below); at a vector of times, a vector of the values (a `DiffEqArray` of the states without `idxs`).
-- **Symbolic access by the system's own indices** (branch `w34`, `lib/TraitIndexing`, SymbolicIndexingInterface's part; open issue 118): `IndexProvider{I}`, a system's indices of its own type `I` (`Symbol` for a `SymbolCache`'s names; a library's structured indices, NetworkDynamics' `VIndex`/`EIndex` and vectors of them): `variable_index`, `parameter_index`, and `observed(sys, idx)`, the getter of a computed value, a function `g(u, p, t)` kept as `Kept{Callable}`, `nothing` by default. `HasSystem` (a problem, a solution, an integrator, a callback's view carry their function's system) and `getsystem` are TraitIndexing's. `getu(x, idx)` reads through the system `x` carries: `getu(sol, idx)(sol)` at the saved times, with the parameters in force at each (`SeriesProvider{U, P}`); `getu(integ, idx)(integ)` now (`ValueProvider{U, P}` with `current_time`), a callback's view too; `getu(x, idx)(u, p, t)` at given values. A vector of indices that is not itself one of the system's is read index by index. `getstate`, `getparam` and `sol[:x]` read names (`IndexProvider{Symbol}`).
-- **`remake(prob; u0, tspan, p, callback)`** (branch `w34`): the user's functions taken back from the problem with their attributes and entered again at the new problem's types; the function's properties and the callbacks kept.
-- **Nonlinear problems with an open set of solvers** (branch `w34`, `lib/TraitNonlinearSolve`, NonlinearSolve's and SteadyStateDiffEq's part): `NonlinearProblemTrait{T, P}` (`u0`, `p`; `residual!`, `nl_jacobian!` with finite differences by default); TDE's `NonlinearProblem` from `f(r, u, p)` or a `NonlinearFunction(f; jac, sys, jac_prototype)`, the residual partially evaluated on the parameters and kept at `Callable{Tuple{Vector{T}, Vector{T}}, Nothing}`, its Jacobian by the library's duals; `SteadyStateProblem(f, u0, p; t)` from an ODE right-hand side at a fixed time, or from any `ODEProblemTrait`; `NonlinearAlgorithm`, an open set: `NewtonRaphson(; linsolve, linesearch)`, `TrustRegion(; linsolve)` (Powell's dogleg), `NonlinearPolyalg(algs...)` whose members are kept values (the default: Newton, Newton with a line search, the trust region); each takes any `LinearSolver`. `solve(prob, alg)`: TraitNonlinearSolve's front end, to which the umbrella's `solve` forwards a nonlinear algorithm, chosen by trait dispatch (`is_nonlinear_algorithm`). `plotpoints(s, i)`, the points `(t, u[i])` a plot takes, is written against the trait: compiled per solution type, once for a `Dynamic{Trajectory}`.
-- `IntegratorView{U, T, P}` (branch `w34`): the fields `u`, `t`, `dt`, `p`, `u_modified`, `terminated` and the operations `add_tstop!`, `terminate!`, `interp!(i, out, τ)` (the state within the last step, by the solver's interpolant). Tsit5's and Rodas5's integrators conform as families, by their own methods. Callbacks see the integrator as a `Dynamic{IntegratorView{U, T, P}}`, so `integ.p` is the problem's parameters at their type.
-- `Callback{U, T, P}` (discrete: `condition`, `affect!`) and `EventCallback{U, T, P}` (continuous: `event_condition`, a scalar whose sign change is an event, located by bisection on `interp!`, and `event_affect!`), branch `w34`. `DiscreteCallback(condition, affect!)` and `ContinuousCallback(condition, affect!)` are plain records of the user's functions; a solver's `init` enters them at the problem's `(U, T, P)` as `FunctionCallback{U, T, P}` / `FunctionEventCallback{U, T, P}`, records of `Kept{Callable{…}}` fields, and the integrator keeps `Vector{Callback{U, T, P}}` and `Vector{EventCallback{U, T, P}}`: its type is `Tsit5Integrator{T, P}` whatever the callbacks. A callback type conforms at the problem's types (`@implement Callback{Vector{Float64}, Float64, LorenzParams{Float64}} Bounce` in `LorenzModels`; a new one at the prompt in `scripts/session.jl`).
-- Gradients through `solve` with tags labelled by the loss's primal signature (`Tag{Sig{A, S}, V}`), with a guard for closures that capture duals.
-- ForwardDiff, like Base, is called directly.
-
-## What it demonstrates
-
-SciML today recompiles the solver for every new callback closure (0.84–0.96 s each, Julia 1.12.2) and for every new loss closure differentiated through it (2.48 s for the second one). Its integrator types run to 3,553 characters (Tsit5) and 24,426 (Rodas5). The trait design predicts:
-- **Callbacks and loss closures cost milliseconds.** Callbacks are cut by a vector of dynamic values, and the automatic-differentiation tag is labelled by the loss's primal signature, not its type.
-- **Loads cannot slow the solvers down, in any load order:** only a stakeholder of one of their dispatch facts, or a pirate that wins at one, can discard their compiled code.
-- **Readable types:** under 100 characters, independent of callbacks.
-- **Errors at the model's implementation,** not deep in the solver.
-- **A trimmed binary** whose reachable code `verify_main` lists.
-
-## Scope
-
-**Pieces:**
-- **`lib/`,** packages of their own since move 3: `ODECore` (the core, below), `TraitRodas`, `TraitLinSolvers`, `TraitNLSolvers`, `TraitImplicit`, `TraitIndexing`, `TraitArrayTools`.
-- **`lib/ODECore`,** the trait module:
-  - the traits `ODEProblemTrait{T, P}`, `IntegratorView{T, P}`, `Callback`;
-  - the library's conforming types `ODEProblem{T, P, R}`, `FunctionCallback`;
-  - Tsit5 (tableau and step from OrdinaryDiffEqTsit5 2.0.0), Rodas5 (from OrdinaryDiffEqRosenbrock 2.2.0) with ForwardDiff's `Dual` under the library's tag, dense LU, the PI controller, `saveat` by interpolation;
-  - `solve_ode(prob::ODEProblemTrait, alg, callbacks, options)`, the entry.
-- **`src/TraitDifferentialEquations.jl`,** the ordinary layer: `ODEProblem(f, u0, tspan, p)`, `solve`, `DiscreteCallback`, `gradient` (tags by the loss's primal signature).
-- **`examples/LorenzModels`,** a user package: an ordinary module around its trait module `Models`, with `LorenzProblem{T}` (its own buffer, a hand-written Jacobian, parameters in a mutable `LorenzParams{T}`), `Bounce` (writes the state), `RaiseSigma` (writes the parameters' σ), and a workload.
-- **`scripts/session.jl`:** the interactive session (below). `scripts/rows.jl`, `baseline.jl`, `errors.jl`, `pirate.jl`, `runtime.jl`: the measurements.
-
-**Baselines:**
-- **(a) stock SciML:** OrdinaryDiffEqTsit5, OrdinaryDiffEqRosenbrock and ForwardDiff;
-- **(b) the same code without traits** (`baselines/PlainODE`, `baselines/PlainLorenzModels`): FunctionWrappers for a plain function (at the plain and the dual signature for Rodas5), the function itself under `specialized(f)` (PlainODE's name for it: `compiled_for` is a cast and cannot be defined), problem types (fields `u0`, `tspan`, `p`) and callback types as methods of PlainODE's generic functions, `Vector{Any}` plus assertions for callbacks, the same gradient tag. Since session 29 it has every feature of the trait form, so each later measurement has its control.
-
-## Measurements
-
-The rows (1–13) are defined in the table under "History (before the facts compiler)", with the numbers of sessions 23–27. The session-29 numbers are in "Measured in session 29".
-
-**Success:**
-- rows 4 and 5 improve by an order of magnitude;
-- row 7 stays at zero policy CodeInstances lost;
-- row 9 is caught early for models written as trait-world code;
-- row 11 stays within its bounds;
-- row 12 runs.
-
-## Branch `w34`: move 1 in form B (E-157, 2026-10-22)
-
-W-34's move 1 ([the plan](../writeup/plans/2026-10-21-w34-sciml-prerequisites.md) §2.2): SciML's split of a plain `ODEFunction` record and a problem with bounded `Callable` parameters, a given Jacobian, the dual chunk picked per problem at Rodas5's `init`, a callable model from a package that knows nothing of the solvers (`examples/ChainModels`: `ChainModel{G}`, a diffusion on a graph of type `G`), and `Trajectory{U, T}`. The existing API is unchanged; `test/w34.jl` tests the new pieces.
-
-How to run the experiment's checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-157 (scripts and logs in `../experiments/w34-sciml/m1/`). In brief (julia-1.13 2943086604, TraitWorld c655dde, product setting, strict mode off): the session's `RESULT` lines are identical to `main`'s on both chunk paths; a new graph type or function compiles no CodeInstance of the solver's functions; a Tsit5 step allocates nothing, except for a parameter that is an immutable non-bits value (a named tuple holding a vector), which is boxed at every `Dynamic` call.
-
-## Branch `w34`: move 2, callbacks and the integrator view (E-158, 2026-10-22)
-
-W-34's move 2 ([the plan](../writeup/plans/2026-10-21-w34-sciml-prerequisites.md) §2.3): `IntegratorView{U, T, P}` with `add_tstop!`, `terminate!` and `interp!`; `Callback{U, T, P}` and `EventCallback{U, T, P}`; `DiscreteCallback` and `ContinuousCallback` plain records entered at a solver's `init` at the problem's types, kept in vectors of the integrator; tstops and continuous events (bisection on `interp!`) in Tsit5. `baselines/PlainODE` has the same driver with typed callbacks (`solve_typed`), the control. Callback types state the problem's types (`LorenzModels`, `scripts/session.jl`); the front end's API is unchanged. `test/w34_move2.jl` tests the new pieces.
-
-How to run the experiment's checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-158 (scripts and logs in `../experiments/w34-sciml/m2/`). In brief (julia-1.13 2943086604, TraitWorld 2e9ed68, product setting, strict mode off): the session's `RESULT` lines are identical to `main`'s; event times and states are identical to the control's bit for bit, discrete and continuous; a new callback compiles nothing in the driver, and the integrator's type is the same for any callbacks; `integ.p` is typed. Two callbacks cost about 1.4 µs and 1 KB per step while the callback records and the integrators are families (lowering L-37), about 35 ns and 32 B with the members declared on their own (the view boxed per call, open issues §4 item 35).
-
-## Branch `w34`: move 5 and the workload on the split packages (E-229, E-230, 2026-10-29)
-
-W-34's move 5 ([the plan](../writeup/plans/2026-10-29-sciml-finish.md)): `Trajectory{U, T}`, `DiffEqArray` and `plotpoints` in `lib/TraitArrayTools` (RecursiveArrayTools' stand-in); a solver returns `CoreSolution{T}`, and the user's `ODESolution{T, P}` keeps its problem as `sol.prob::Kept{ODEProblemTrait{T, P}}`. `test/w34.jl` tests the new pieces.
-
-How to run the checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-229 (`../experiments/w34-sciml/move5/`); the session: [`../experiments/ttfx/README.md`](../experiments/ttfx/README.md), section E-230. In brief (julia-1.13 bfca89decc, TraitWorld c39fedc, bc68501, product setting, strict mode off):
-- the session's 9 `RESULT` lines are unchanged; the suite passes (116 checks);
-- one solution type, `ODESolution{Float64, Vector{Float64}}`, for a function, the same compiled, two callable models, Tsit5 and Rodas5; `plotpoints` compiled per solution type, once for a `Dynamic{Trajectory}`;
-- E-168's session over the split packages, plots through `plotpoints` (TraitMakie 231cf52, two cores): **1.76–1.77 s** (load 1.17 s, first solve 0.19, first plot 0.18, second model 0.053); Python 1.43 s; PlainODE and PlainPlots 1.17–1.20 s. The load is the umbrella's: family members fixed in its image and checked again at load (744 ms; W-84). Move 5 adds about 0.14 s of it (the problems the solutions keep).
-
-## Branch `w34`: W-32's R2 items for NetworkDynamics (E-239, 2026-10-29)
-
-[The R1 census](../writeup/plans/2026-10-29-ndport-r1-census.md) §3, items 1, 2, 12–16 and part of 17, and open issue 119: optional properties of a problem's function as traits, refused by a solver that cannot take them; the system object back (`getsystem`); Rodas5 with continuous callbacks; `init`, `step!`, `solve!` (the drivers are their integrators' `advance!`; `ODEStepper`); parameters saved by callbacks (`save_discretes!`, `parameters_at`); callbacks a problem keeps; `tstops` and the callbacks' `initialize`; `auto_dt_reset!` and `affect_neg!`; `ODEFunction` callable. `test/r2.jl` tests them.
-
-How to run the checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-239 (`../experiments/w34-sciml/r2/`); the session: [`../experiments/ttfx/README.md`](../experiments/ttfx/README.md), section E-239. In brief (julia-1.13 bfca89decc, TraitWorld ca92f22, ede32e3 and f0a79ae, product setting, strict mode off):
-- the session's 9 `RESULT` lines are unchanged; the suite passes (161 checks);
-- E-168's session in setting D: 1.29 s against a same-day control's 1.19 s on 3a51d95; the difference is the load.
-
-## Branch `w34`: open issue 118, structured indices and observed values (E-245, 2026-10-29)
-
-Open issue 118 as decided (2026-10-29, mine, for W-71): the trait protocol `IndexProvider{I}` with `observed`, not SymbolicIndexingInterface interop. `HasSystem` moved from ODECore to TraitIndexing, beside the protocol (ODECore re-exports it). The solution's `idxs` forms read an index of the system's own through `getu`, so a library implements the protocol instead of methods on TDE's solution. `test/r118.jl` tests it (21 checks; a model with an abstract index type, one with vectors of its indices as indices of its own, names, a solution with saved parameters, the integrator, a callback's view, the refusals). How to run, and the dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-245.
-
-## Branch `w34`: W-32's R3 items for NetworkDynamics (E-242, 2026-10-29)
-
-[The R1 census](../writeup/plans/2026-10-29-ndport-r1-census.md) §3, item 11 and S7, and open issue 117: nonlinear problems with an open set of solvers (`lib/TraitNonlinearSolve`, [the note](../writeup/plans/2026-10-29-tde-nonlinear-problems.md)), `remake`, dense output by the solver's interpolant (`Kept{Interpolant{U, T}}`), the solution's `idxs` forms by dispatch on the index's type. Not built: `Rodas4`, `copy` of absent parameters (census item 17's rest). `test/nonlinear.jl` and `test/r3.jl` test them.
-
-**A choice (mine):** open issue 117 decided as its proposal, by the user's rule "more expressive is principled": the solution keeps the solver's interpolant as `Kept{Interpolant{U, T}}`, an open set like the solvers, no type parameter added; `dense` is on without `saveat`, as SciML's default. TDE's Tsit5 interpolates by the cubic Hermite polynomial its `saveat` and event location use, not by upstream's fourth-order free interpolant.
-
-How to run the checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-242 (`../experiments/w34-sciml/r3/`); the session: [`../experiments/ttfx/README.md`](../experiments/ttfx/README.md), section E-242. In brief (julia-1.13 bfca89decc, TraitWorld d22ec7b, e4eeed9 and 388cb33, product setting, strict mode off):
-- the session's 9 `RESULT` lines are unchanged; the suite passes (222 checks);
-- E-168's session in setting D: 1.34–1.35 s against a same-day control's 1.27–1.32 s on f0a79ae (four sessions); the load +0.02–0.04 s (TraitNonlinearSolve), the second model +0.02 s (not attributed), the first solve unchanged. At e4eeed9 it was 1.74–1.77 s: the umbrella's `solve` chose the nonlinear front end by `conforms`, which a caller's inference followed into TraitWorld's membership lookup (0.43 s); 388cb33 chooses by trait dispatch.
-
-## Branch `w96`: Tsit5's own interpolant and the states saved at events (W-96, E-248, 2026-10-29)
-
-This revisits the choice recorded under open issue 117 (the E-242 section above): TDE's Tsit5 read between its steps by a cubic Hermite polynomial. R5 (E-246) found that this put NetworkDynamics' step e out of tolerance against upstream (at `TIMES` 1.8e-6 from a tight run, upstream's interpolant 1.3e-7; event times 5e-7 to 2.5e-6 off). Built on branch `w96` (from `w34` 282edb3; a fast-forward of `w34`):
-- **Tsit5's own interpolant:** the free fourth-order continuous extension of Tsitouras 5(4), with the coefficients of OrdinaryDiffEqTsit5 2.1.5's `Tsit5Interp` (`tsit5_interp!`), from the step's start and its seven stages. `Tsit5Steps{T}` keeps them per step, an `Interpolant{Vector{T}, Float64}` (open issue 117's open set, unchanged). Dense output, `saveat` and event location use it. Rodas5's own interpolant is unchanged.
-- **The states saved at events:** the solution saves the state before and after each event, continuous and discrete, as SciML's `save_positions` at its default: before the affect unless the step's saves just saved that state (every step, or a time of `saveat` equal to it), after it always for a discrete callback and for a continuous one whose affect leaves `u_modified` set. `save_step!` and `save_state!` in ODECore, shared by Tsit5 and Rodas5. `sol(te)` and `linear_at` at an event's time give the state before it (SciML's left continuity); the parameters in force at a saved time are those saved at or before it, for both states (as SymbolicIndexingInterface reads a time).
-- **After an event the next step is the accepted step's size** (SciML's `dtrelax = 1`), unless a callback asks `auto_dt_reset!`.
-- Not built: a `save_positions` keyword on the callbacks; the recomputation of a step's stages over the part an event cut (upstream's `reeval_internals_due_to_modification!`): TDE keeps the full step's stages and size, so its interpolant over the cut part is the full step's.
-- `test/w96.jl` (22 checks): the interpolant exact for a solution of degree 4; the dense output and `saveat` at three times within 1e-9 of upstream's (upstream's steps at 1e-8, `experiments/w34-sciml/w96/upstream_ref.jl`); between the steps as accurate as at them against a tight run; event times within 1e-10 of upstream's (Hermite: 3e-8); the saved times with `saveat` upstream's; a discrete callback's saves. `test/r118.jl`: the discrete callback's time saved twice.
-
-How to run the checks, and their dated results: [`../experiments/w34-sciml/README.md`](../experiments/w34-sciml/README.md), section E-248 (`../experiments/w34-sciml/w96/`); NetworkDynamics' comparison: [`../ndport/README.md`](../ndport/README.md), section E-248. In brief (julia-1.13 bfca89decc, TraitWorld f270262, 7b4ad78 and 5862baa, product setting, strict mode off):
-- the session's 9 `RESULT` lines are unchanged (no `saveat` or continuous event in it); the suite passes (265 checks);
-- R5's comparison again: step e within tolerance; the ported workload's step d and e values 1e-8 to 7e-8 from upstream's (R5: up to 7.7e-6), the saved states upstream's (38);
-- E-168's session in setting D: 1.356–1.358 s against a same-day control's 1.357–1.415 s on 282edb3 (two sessions each after a warm-up, alternating, `jl --exclusive`); its Lorenz digest (by `saveat`) now upstream's (setting U), the control's was the Hermite polynomial's.
-
-## Checked in W-2 (2026-10-21)
-
-The restructuring around `ODEProblemTrait`, checked for correctness and for gross regressions, not measured: julia-1.13 711484a23e, product setting, one process, load order "none", load 0.5–1.4.
-- The test suite passes (64 checks, 1 broken as before); the session passes in both libraries with identical `RESULT` lines.
-- `scripts/rows.jl none` once, against TDE before W-2 on the same build (aac66b7); logs in `../experiments/checks/logs/w2/`:
-
-| Row | Before W-2 | W-2 |
-|---|---|---|
-| 1 first Tsit5 solve, a plain function | 23.0 ms | 19.4 ms |
-| 2 a second right-hand side function | 17.9 ms | 21.4 ms |
-| 2 a new problem type (before: model type): `@implement` / first solve | 61.9 / 325.7 ms | 96.9 / 268.9 ms |
-| 3 first Rodas5 solve | 24.4 ms | 24.9 ms |
-| 4 a new callback closure / a second one | 22.8 / 14.8 ms | 27.1 / 17.6 ms |
-| 5 first gradient / a second loss / a third loss | 54.2 / 62.6 / 83.0 ms | 80.3 / 49.7 / 115.9 ms (gc 17 and 19 ms in the first and third) |
-| 6 a Float32 state, first solve | 403.5 ms | 428.8 ms |
-
-- Found on the way: a front end specialized on the problem's type made each caller's first call infer the solver's entry (rows 1 and 2 at 2–3× before); `@nospecializeinfer` and a function barrier per problem type removed it. A first gradient compiles the same methods in both versions (29 and 31 ms in one process); the rows' difference is within one run's noise and collection.
-- `@implement` of a problem type checks three declared fields beside the operations (97 against 62 ms).
-- **After the second review (2026-10-21):** the function is kept at the duals as a typed field with the chunk fixed at 8 (no `fn::Any`), on julia-1.13 6d480d0753 (the C ABI rule) and TraitWorld with stored functions' pointers made at their first call. Rows once more (`rows-w2-3.log`): 1 20.6 ms; 2 22.3 ms, `@implement` 97.3 / first solve 273.5 ms; 3 28.0 ms; 4 36.0 / 30.2 ms; 5 79.7 / 53.1 / 114.8 ms; 6 429.2 ms. A callback's pointer is now made at its first call, inside the row's window, not when the callback is constructed outside it: rows 3 and 4 carry what construction did before. The session passes with identical `RESULT` lines (`session-*-2.log`).
-
-## Correctness (session 29)
-
-No timings: these rows say what happens, not how fast. Tests: `test/routea.jl`, `test/compiledcall.jl`; frames and lines from a message printed with its backtrace, harness frames included.
-
-**Route A: the user's mistakes at the implementation** (review example 5):
-
-| Mistake | Where caught | What the user sees |
-|---|---|---|
-| (b) no `rhs!` at all | at `@implement` | `ImplementError: no field of NoRhs conforms to ODEModel and NoRhs has no methods for its operations (fields: k::Float64); name a field `data`, write `project(t) = …`, or implement the operations`. Names neither `rhs!` nor its signature, and suggests projections, which are gone (TraitWorld issue) |
-| (b′) `jacobian!` but no `rhs!` | at `@implement` | `OnlyJac has methods for some operations of ODEModel but not for rhs!: define them, …`. Names the operation, not its signature |
-| (c) `rhs!` returns `du` (`du .= …` last) | at `@implement`, also in the block form | `` `rhs!` at Tuple{BadRet, Vector{Float64}, Vector{Float64}, Float64} returns `Vector{Float64}`, declared `Nothing` ``: the cause and the fix, 3 lines before the frames |
-| (c′) `u::Vector{Float32}` in `rhs!` | at `@implement` | the message of (b): does not name the existing method or the declared signature (TraitWorld issue) |
-| (a) a `Float64` buffer in `Lorenz{T}`, under `gradient` | **at run time**: the family member's check at first use passes | `MethodError: no method matching Float64(::Dual{…})`, 69 lines, 28 frames, longest line 685, 12 of the frames Base's broadcasting. Inference does not prove the conversion fails, so no check at `@implement` sees it. The outcome against that the review named |
-| a dual model with a `Float64` state (the loss forgot `eltype(p).(u0)`) | at the first operation call | `TraitArgumentError: operation rhs! of trait ODEModel at representation Lorenz{Dual…} is declared for arguments …, got …`, 34 lines, 16 frames |
-
-Since TraitWorld 3ba6c05, the messages of (b) and (c′) name `rhs!` and the declared argument types; the two tests that were broken pass (TraitDifferentialEquations 62e9fa4).
-
-**A right-hand side with a declared signature, `Dynamic` and `Compiled`** (review example 10; session 29, in the spelling of then, `DynamicCall` and `CompiledCall`):
-
-| Case | `Dynamic` (default) | `Compiled` (`compiled_for(f)`) |
-|---|---|---|
-| Lorenz, saved states | identical (`==`) | identical |
-| out of place, `f(u, p, t)` | `MethodError` for the declared arguments at the first call, 15 frames | first a warning at the model's first use (`rhs!` … always throws (inferred `Union{}`): a fallback, not an implementation), then the same `MethodError` |
-| returns `du` | `TypeError: expected Nothing` at the first call | warning, then the same `TypeError` |
-| a stored function of another signature, `Dynamic{Callable{Tuple{Vector{Float64}}, Nothing}}(f)` | `TraitBoundError` at the entry, before the solve, naming both signatures | the same |
-| `Float32` state, Rodas5, gradient | — | no compiled entry: runs dynamic, identical values |
-| a function redefined at the prompt | the next solve uses the new definition | the same (the compiled solver is recompiled: the function's owner changed a fact) |
-
-Since TraitWorld's member check (2026-10-21, W-23), the `Compiled` column's two errors are an `ImplementError` at the problem's first use: the problem type is a member of the problem family that does not conform, and the message names `rhs!` at the declared arguments (`test/compiledcall.jl`).
-
-With `Dynamic` too, such a function is refused at the bound with `TraitBoundError` (TraitWorld, W-81: a kept function seen at the core's signature is checked there).
-
-**The interactive session** (`scripts/session.jl trait|plain`): **passes in both libraries, and the 9 `RESULT` lines of the trait session and the plain one are identical** (16 checks: a precompiled model and its callbacks, a new function, the same in compiled mode (equal values), a new model type (equal values), a new callback closure and a new callback type (equal values), two losses against central differences, Rodas5 by duals against by finite differences, `Float32`, and an edit of a function already used, in both modes). Each entry is evaluated as the REPL evaluates it (soft scope, `Core.eval` in `Main`, in order), not at a real REPL. Found on the way: `gradient` raised a `TypeError` for a loss that captured a `Vector` (`_holds_duals` looked at `1` in `Array{Float64, 1}` as a type); fixed, with a test.
-
-**PlainODE equivalents:** route A model types (`PlainODE.rhs!`, `jacobian!`), `specialized` (the function unwrapped, the solver specialized on it), callback types (`PlainODE.condition`, `affect!`), Rodas5 (FunctionWrappers at the plain and the dual signature), `baselines/PlainLorenzModels`. Found on the way: PlainODE's typed default `jacobian!(m, J::Matrix{Float64}, …)` was ambiguous with `jacobian!(m::Lorenz{T}, J::Matrix{T}, …)`; the plain default is now untyped. The trait form has no such ambiguity: a default belongs to the implementation.
-
-## Measured in session 29
-
-A dated table: julia-1.13 61852d8fb1, TraitWorld 375a930 (the build of 2026-10-19), the patched build. `scripts/rows.jl`, fresh processes, *n = 1* per load order; big loads = CSV, DataFrames, CairoMakie. One machine, shared with other jobs. The current numbers, from the round of 2026-10-20: [`../writeup/design/evidence.md`](../writeup/design/evidence.md) §3.
-
-| Row | No loads | Loads before | Loads after |
-|---|---|---|---|
-| `using TraitDifferentialEquations` | 0.47 s | 7.28 s (one run; 1.29–1.39 s in other runs: a cache rebuilt once, stacked environments) | 0.47 s |
-| first Tsit5 solve, a plain function | 10.0 ms | 27.8 ms | 9.9 ms |
-| a second model function | 9.8 ms | 11.2 ms | 27.6 ms |
-| a new model type: `@implement` / first solve | 142 / 82 ms | 164 / 133 ms | 149 / 89 ms |
-| first Rodas5 solve | 16.6 ms | 17.0 ms | 16.8 ms |
-| a new callback closure / a second | 12.4 / 5.2 ms | 24.0 / 5.4 ms | **170.7** / 5.2 ms |
-| first gradient / second loss / third loss | 29 / 17 / 62 ms | 34 / 18 / 63 ms | 34 / 17 / 62 ms |
-| ForwardDiff's own tag, for comparison | 0.70 s | 0.73 s | 0.72 s |
-| a `Float32` state, first solve | 0.46 s | 0.45 s | 0.45 s |
-
-- At the start of the phase: a new model type after the loads took 2.0 s and 2.1 s.
-- Session 27 (the prototype policy): 0.16–0.23 s and 33–44 ms, timed inside `@elapsed`. Since E-146 (2026-10-20) `scripts/rows.jl` times each first call whole: `@implement` 66–74 ms and the first solve 335–371 ms in every load order, the solve mostly the solver compiled for the new key (`../writeup/design/evidence.md` §3).
-- Row 4 (a new callback closure) after the loads: 171 ms against 12 ms without, on the build of 2026-10-19. Diagnosed (E-141: `solve`'s plain front end, invalidated by IntervalArithmetic's ForwardDiff extension) and fixed by a function barrier (E-146): 21–23 ms in every load order.
-- The first Tsit5 solve here is a plain function's, not route A's precompiled package (row 1 of the plan).
-
-**Run time per solver step** (row 11; `scripts/runtime.jl`):
-
-| What | Trait form | Baseline | Notes |
-|---|---|---|---|
-| Lorenz (n = 3) | model type 158–160 ns; plain function 190–199 | OrdinaryDiffEq 338–355 ns | |
-| a diffusion chain (n = 1,000) | 7.5–7.9 µs | OrdinaryDiffEq 6.1 µs | OrdinaryDiffEq's stage loops are fused with `@muladd` |
-
-**Not measured yet** (each with PlainODE as the control; in fresh sessions and at a REPL; with the plain baseline under `all` (`JULIA_COMPILE_BY_FACTS=1`, or the facts system image)):
-- PlainODE on every row: no PlainODE numbers were taken in session 29, so the session-29 table has no plain control.
-- The control under `all` (row 7): compiled code lost per load. Session 29 timed the rows in three load orders but did not count lost CodeInstances.
-- Any row at a real REPL: the rows above ran in fresh processes.
-- **Row 1 for route A:** the first solve of `LorenzModels.Lorenz` from its image (the plan's "precompiled user package"), against `PlainLorenzModels`.
-- **Row 4 for callback types:** a new callback type at the prompt, against a new closure.
-- **Example 10, `Compiled`:** run time per step at n = 3 and n = 1,000 against `Dynamic` and the model type (row 11's columns); compile time for a second function in compiled mode; what the image holds.
-- **Row 5 for route A:** first gradient and a second loss through `Lorenz{Dual}`.
-- **Row 6** from an image that holds the key (the per-session cost, 0.45–0.46 s, is above).
-- **Row 9 for route A:** the correctness table below in lines, frames and longest line, beside SciML's.
-- **Row 11 with callback types:** the cost of `Dynamic{Callback}` per step for `Bounce`, against a closure and against PlainODE's `Vector{Any}`.
-- **The session:** the time per entry of `scripts/session.jl`, both libraries, at a real REPL.
-- **Rodas5 in PlainODE:** row 3's control.
-- Row 8's strict half and row 12 (the trimmed binary) are not built: strict mode and builds were outside this task.
-- Row 13 (precompile time, image sizes, image load time) on the current build.
-
-## Order of work
-
-1. Tsit5 with a trait-world model, the driver, and rows 1, 2, 4, 7, 10.
-2. The function route and the compatibility layer.
-3. Rodas5 with automatic differentiation (rows 3, 9).
-4. *(Done, session 27.)* Tag erasure (row 5).
-5. *(Session 29.)* Route A as a user package, `CompiledCall`, the implementation errors, the session, PlainODE complete.
-6. The trimmed binary (row 12).
-
-**Prerequisites in TraitWorld:**
-- `Dynamic{X}`;
-- lenses and trait fields (properties);
-- associated types (`StateVector{T}` families);
-- constructor operations and the implementation's inverse;
-- definition checking with parameter archetypes;
-- the dynamic model mode, pinned per integrator: superseded by keys (the function route is the dynamic mode; a model type is compiled for its key);
-- bounds that name an associated type (`m::ODEModel{T} where T`) and `Callable` signatures over a method's static parameters: not supported yet (see Correctness).
-
-**Running on the shared machine:** one Julia job at a time, niced, with full image builds under a memory guard.
-
-
-## History (before the facts compiler)
-
-The measurements of sessions 23–27, under TraitWorld's prototype policy, unchanged.
-
-### Measurements (sessions 23–27)
-
-Each in fresh sessions; the stock numbers are from `../experiments/solvers/`. The millisecond predictions are for the patched build: on stock Julia, package images keep no native code for the facts policy's code, so each session compiles it again (piece 5 of `../writeup/explorations/julia-support.md`). Session 26 numbers come from `scripts/rows.jl`, one fresh process per cell, with CSV, DataFrames and CairoMakie loaded before, after or not at all. They are single runs. Rows still marked *remeasure* predate wrapping by facts.
-
-| # | What | Stock SciML | Prediction | Measured (stock SciML on 1.13.2 in brackets) |
-|---|---|---|---|---|
-| 1 | first Tsit5 solve, precompiled user package | 0.16 s | < 20 ms (patched) | **patched (session 27): 6.4–8.0 ms in every load order, the same on the system image**, from 47 ms before the fixes of session 27 (the family implementation found its builder in each session, 34 ms). Session 26: patched (session 26): 32–37 ms in every load order. Stock: 70–75 ms, 505 ms with the loads before. Session 24: 55–60 ms patched. Before facts (session 23): 73–76 ms (0.14–0.17 s) |
-| 2 | first Tsit5 solve, a new model type at the prompt | 0.16 s | 10–50 ms, also after big loads | **patched (session 27), in every order: a second model function 6–8 ms; a new model type `@implement` 0.16–0.23 s, first solve 33–44 ms (113 ms once with the loads after); the same on the system image (`@implement` 0.24–0.26 s).** Session 26: a second model function 7–12 ms in every order (0.10–0.11 s). A new model type: `@implement` 0.73 s, first solve 72 ms; after big loads, before or after, `@implement` 1.45–1.50 s and first solve 480–490 ms. Stock: a second function 7 ms, but 1.39 s after loads; a new type's first solve 4.1–5.1 s. New trait code after big loads is the open problem (open-issues §4.5; Julia piece 12) |
-| 3 | first Rodas5 solve, new model | 1.43 s | 20–80 ms | patched (session 27), after a Tsit5 solve: 22–26 ms in every order, also on the system image. Session 26, after a Tsit5 solve in the same session: 23 ms, 27 ms with the loads before, 181 ms with the loads after (to explain). Session 24, Rodas5 first in the session: 72–77 ms in every load order; a second model function 65–92 ms (0.069–0.075 s) |
-| 4 | a new discrete callback type or closure | 0.84–0.96 s | < 20 ms | patched (session 27): a new callback closure 13–15 ms without loads, 25–31 ms with them; a second one 25–32 ms; on the system image 13–29 ms and 16 ms. Session 26: a new callback closure 13–14 ms, a second one 25–32 ms, in every order; stock the same (13–16, 31–33 ms). Session 23: 12–14 ms (0.67–0.83 s) |
-| 5 | gradient through Tsit5: first loss, second loss closure | 1.97–2.73 s, then 2.48 s | < 100 ms, then < 10 ms (tags labelled by the loss's primal signature) | patched (session 27), in every load order: first gradient 34–55 ms, a second loss closure 17–21 ms, a third loss with another model function 64–72 ms. ForwardDiff's own tag (the loss's type) for comparison: 0.67–0.87 s. The same on the system image. The second loss is above the prediction: the loss closure and `ODEProblem` at the dual types compile per closure |
-| 6 | `Vector{Float32}` state, not precompiled | 2.06 s | once, then cached (a view cache; on patched, with its native code) | patched (session 27): first session 0.59 s; later sessions 0.105 s, with the view cache holding the worker (the ordinary layer's methods for `Float32` and the family's builder are found again in each session). Tsit5 is generic in the element type since step 4 |
-| 7 | rows 1–5 after CairoMakie, DataFrames, Plots, in all six load orders | to measure | identical; 0 policy CodeInstances lost | **session 27:** rows 1–5 identical with CSV, DataFrames, CairoMakie before, after or not at all (row 1 6.4–8.0 ms, row 5 30–55 then 17–21 ms); `g2all` 0 policy CodeInstances lost over twelve loads (CSV, DataFrames, CairoMakie, ChurnStorm, BasePirate and seven more), work 9–13 ms. Plots not tested. Earlier: patched (session 24, g2all): 0 lost over twelve loads in any order. Session 26: rows 1 and 4 identical in every order; row 2 identical for a new function, not for a new type (new trait code after loads); row 3's 181 ms after the loads to explain. Row 5 not yet |
-| 8 | a package defining the `nextfloat(::Dual)` pirate | silent | followed: the solver recompiles exactly where the pirate wins at one of its facts; refused under strict mode (deferred) | first half, patched (session 27, `scripts/pirate.jl`; the pirate is `+` on the gradient's duals, which the solver uses, since it never calls `nextfloat`): defined after a first gradient, it is followed: the next gradient compiles the solver's dual code again (373 ms) and calls the pirate 2,192 times; plain code calls it too; the gradient is unchanged (the pirate returns the same value). Strict mode's refusal: deferred |
-| 9 | the three error cases of findings §17 | 22–44 frames, longest line up to 33,673 | caught at the implementation; otherwise ≤ 12 frames | patched (session 27, `scripts/errors.jl`; full message with backtrace, harness frames included as for SciML): (1) parameters used but never passed: 27 lines, **12 frames**, longest line 289 (SciML 71 lines, 29 frames, 3,789); (2) a `Float64` cache under `gradient`: 73 lines, 30 frames, longest line 865 (SciML 101, 44, 5,574); (3) the same under Rodas5's Jacobian: 63 lines, 25 frames, longest line 302 (SciML 81, 22, 33,673). TraitWorld hides its own frames (`JULIA_TW_ALL_FRAMES=1` shows them; 21/42/34 frames before). Cases 2 and 3 keep 12 frames of Base's broadcasting inside the user's function, so they miss the frame bound; none is caught at an implementation, since the model is a plain function |
-| 10 | `typeof(integrator)`: Tsit5, Tsit5 + callback, Rodas5 | 3,553 / 3,683 / 24,426 characters | < 100 each | `Tsit5Integrator{Float64, Vector{Float64}}`, with or without callbacks (3,553 / 3,683) |
-| 11 | run time per step, n = 3 and n = 1,000, by model mode | stock | within 1.3× of compiled at n = 3, 2% at n = 1,000, including the policy's run-time sites | patched (session 27, `scripts/runtime.jl`, minimum of 20 solves, every step saved, OrdinaryDiffEq without dense output): Lorenz, n = 3: plain function 206 ns per step, model type 173 ns (**1.19×**), OrdinaryDiffEq 355 ns. A diffusion chain, n = 1,000: plain function 7.9 µs, model type 8.0 µs (**within 1%**), OrdinaryDiffEq 6.9 µs: the stage loops here are plain loops, OrdinaryDiffEq's are fused with `@muladd`, 15% faster |
-| 12 | trimmed binary solving Lorenz with Tsit5, Rodas5 and `Bounce` | to measure | runs; a few MB | not yet |
-| 13 | precompile time, image sizes, image load time (stock and patched) | stock images | to measure: the price of placement and of piece 5 | session 27 (`../experiments/demos/images.jl`, each package compiled again with its dependencies compiled): TraitDifferentialEquations 8.2 s patched, 8.9 s stock; image 9.9 MB native code patched, 7.1 MB stock (piece 5 keeps the policy's code); `using` 0.29 s patched, 0.22 s stock. TraitWorld itself: 30 s and 38 MB patched, 23 s and 28 MB stock; `using` 0.13–0.14 s |
-
-**Against baseline (b), PlainODE** (session 27; `baselines/PlainODE`, `scripts/baseline.jl`; patched, view caches off, ms; loads = CSV, DataFrames, CairoMakie):
-
-| | TraitDifferentialEquations: no loads / loads before / loads after | PlainODE: no loads / before / after |
-|---|---|---|
-| `using` | 278–284 / 338 / 278 | 99–112 / 158 / 99 |
-| row 1, first Tsit5 solve | 6.5 / 6.5 / 6.8 | 9.9 / **54** / 10.1 |
-| row 2, a second model function | 6.0 / 6.2 / 6.3 | 5.0 / 4.8 / 5.1 |
-| row 4, a new callback closure | 17 / 29 / 29 | 5.1 / 15 / **144** |
-| row 4, a second one | 5.3–5.9 | 4.5–4.8 |
-| row 5, first gradient | 30 / 36 / 36 | 37 / 39 / 45 |
-| row 5, a second loss closure | 17–20 | 20–22 |
-
-- **What discipline alone gives:** PlainODE (FunctionWrappers, untyped callbacks, the same signature-labelled tag) matches the trait form on rows 2 and 5 in a fresh session, and is faster to load and for a first callback.
-- **What the trait form adds:** no load order changes its numbers (row 1 after the loads: 6.5 against 54 ms; a first callback after them: 29 against 144 ms), and its code is checked where it is defined.
-- **What it costs:** loading TraitWorld (0.17 s more) and about 12 ms more for a session's first callback: the user's closures see the integrator as a `Dynamic{IntegratorView}`, so their field accesses dispatch, and each closure's pointer wrapper is compiled (about 5 ms per closure, as a FunctionWrapper's would be).
+- The design: the design repository's `writeup/reference/` (traits, facts, compiler, lowering).
+- The lessons of the ports: `writeup/intro/porting.md`.
