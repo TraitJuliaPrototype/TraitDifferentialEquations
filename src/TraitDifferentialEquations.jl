@@ -132,7 +132,7 @@ end
 _wl_rhs!(du, u, p, t) = (du[1] = 10.0 * (u[2] - u[1]); du[2] = u[1] * (28.0 - u[3]) - u[2]; du[3] = u[1] * u[2] - 8 / 3 * u[3]; nothing)
 _wl_rhs0!(du, u, p, t) = (du .= -u; nothing)
 _wl_rhsp!(du, u, p, t) = (du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)
-if ccall(:jl_generating_output, Cint, ()) == 1   # a precompile workload, run while the package image is built
+if Base.generating_output(true)   # a precompile workload, run while the package image is built
     let
     prob = ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1), [10.0, 28.0, 8 / 3])
     solve(prob, Tsit5())

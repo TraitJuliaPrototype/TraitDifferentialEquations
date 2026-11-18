@@ -32,7 +32,7 @@ include("solvers.jl")
 # (only the function itself is compiled, at its declared signature, when the problem is solved).
 _wl_res!(r, u, p) = (r[1] = u[1]^2 - p[1]; r[2] = u[2] - u[1]; nothing)
 _wl_ss!(du, u, p, t) = (du[1] = p[1] - u[1]; du[2] = u[1] - u[2]; nothing)
-if ccall(:jl_generating_output, Cint, ()) == 1   # a precompile workload, run while the package image is built
+if Base.generating_output(true)   # a precompile workload, run while the package image is built
     let
     solve(NonlinearProblem(_wl_res!, [1.0, 1.0], [2.0]), NonlinearPolyalg())
     solve(SteadyStateProblem(_wl_ss!, [0.0, 0.0], [1.0]), NewtonRaphson())
