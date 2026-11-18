@@ -123,10 +123,17 @@ include("r3.jl")
 include("r118.jl")
 include("w96.jl")
 
-# a cast or a carried attribute at a parameter no trait types has no effect (open issue 162)
-@testset "TraitDifferentialEquations: no casts without effect" begin
-    @test isempty(detect_unused_casts(TraitDifferentialEquations))
-    @test isempty(detect_kept_storage(TraitDifferentialEquations.ODECore))     # no `keep` into storage typed by a trait (traits §7.8)
+# storage keeps the form it is given (traits §8): a solution holds its solver's steps as the solver made them, a plain
+# member in a field typed by `Interpolant`; a solver's linear solver is kept as given, a box or a wrapper alike
+@testset "TraitDifferentialEquations: storage keeps the form given" begin
+    prob = ODEProblem(lorenz!, U0, (0.0, 1.0), P0)
+    @test getfield(solve(prob, Tsit5()), :interp) isa TraitDifferentialEquations.ODECore.Tsit5Steps{Float64}
+    @test getfield(solve(prob, Rodas5()), :interp) isa TraitDifferentialEquations.TraitRodas.Rodas5Steps
+    r = solve(prob, Rodas5())
+    for ls in (Dynamic{LinearSolver}(DenseLU()), compiled_for(DenseLU()))
+        alg = Rodas5(linsolve = ls)
+        @test alg.linsolve === ls && solve(prob, alg).u == r.u
+    end
 end
 
 # two traits' operations of one function need a joint method (traits §6.3; open issue 174)

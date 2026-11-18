@@ -4,13 +4,13 @@
 #     problem type;
 #   - TDE's own `ODEProblem` keeps its function at parameters bounded by `Callable`: a plain function
 #     as a `Dynamic{Callable{…}}` (`Callable`'s default), so the solver compiles once per element and
-#     parameter type, whatever the function; under `compiled_for(f)` the function itself, and the
-#     solver compiles per function;
+#     parameter type, whatever the function; given as the wrapper, `compiled_for(f)`, the function's own
+#     type, and the solver compiles per function;
 #   - callbacks are entered at the problem's types at a solver's `init` and stored by their trait
 #     (`Vector{Callback{U, T, P}}`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
-#     so a new callback compiles nothing in the solver unless the caller casts it with `compiled_for`,
+#     so a new callback compiles nothing in the solver, only its own methods at the integrator's box,
 #     and a callback reads `integ.p` at the problem's parameter type;
-#   - a solution is a `Trajectory{U, T}` (TraitArrayTools') and keeps its problem as a kept value: code over
+#   - a solution is a `Trajectory{U, T}` (TraitArrayTools') and keeps its problem in the form given: code over
 #     solutions is compiled per state and time type, whatever the model, and the solution's type has no
 #     axis for the problem's function or type;
 #   - the parameters' type stays in the outermost layer (W-63): `solve_ode` partially evaluates the
@@ -37,7 +37,7 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        HasCallbacks, problem_callbacks, takes_mass_matrix, auto_dt_reset!, save_discretes!, parameters_at,
        initialize!, event_initialize!, event_affect_neg!, no_initialize,
        CoreIntegrator, advance!, core_solution, ODEStepper, init_core, init_ode, step!, remake,
-       Interpolant, interpolate, Tsit5Steps, push_step!, dense_step, kept_interpolant
+       Interpolant, interpolate, Tsit5Steps, push_step!, dense_step
 # the integrator's step interface, which the solver packages implement for their integrators: public, so
 # that another package's integrator may implement it (an owner-only function's methods are its owner's;
 # traits §12.2, open issue 212)
@@ -233,10 +233,6 @@ function push_step!(d::Tsit5Steps{T}, t0::Float64, t1::Float64, dt::Float64, u0:
     push!(d.u0, copy(u0)); push!(d.k, map(copy, k))
     return nothing
 end
-"A solver's steps as the solution keeps them: kept as an `Interpolant`, or `nothing` (no dense output, or no step taken)."
-kept_interpolant(::Nothing) = nothing
-kept_interpolant(d::Interpolant{U,Float64}) where {U} = keep(d)
-
 """
     CoreIntegrator{U, T}
 
@@ -512,8 +508,8 @@ _rhs!(m::CoreProblem, du, u, t) = core_rhs!(m, du, u, t)
     core_problem(prob) -> CoreProblem
 
 The outer layer's step (W-63): the problem's functions partially evaluated on its parameters. TDE's
-`ODEProblem` keeps them so already (`PartialFn`): they pass as they are kept, each read back with its
-attribute (traits reference §7.4). For a problem type that implements `ODEProblemTrait` itself, its
+`ODEProblem` keeps them so already (`PartialFn`): they pass in the form they are kept, a box or a wrapper
+(traits reference §7.4, §8). For a problem type that implements `ODEProblemTrait` itself, its
 `rhs!` and `jacobian!` partially evaluated on the problem, `Dynamic`.
 """
 function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
@@ -623,8 +619,8 @@ function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
     end
     return d, c
 end
-# a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which sees
-# through casts and kept values; a value of both traits is a continuous one
+# a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which takes a
+# plain member, a box and a wrapper alike; a value of both traits is a continuous one
 _enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::EventCallback{U,T,P}) where {U,T,P} =
     (push!(c, cb); nothing)
 _enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::Callback{U,T,P}) where {U,T,P} =
@@ -802,7 +798,7 @@ const DEFAULT_OPTIONS = SolverOptions(1e-6, 1e-3, Inf, 100_000, Float64[], Float
     ODESolution{T, P}
 
 A solution as the user sees it (SciML's move 5): the saved times `t` and states `u`, the return code, the
-counts, and the problem it solves, kept with its attribute (`sol.prob`, a field typed `ODEProblemTrait{T, P}`). Its
+counts, and the problem it solves, kept in the form given (`sol.prob`, a field typed `ODEProblemTrait{T, P}`). Its
 type names the state's element type and the parameters' type, never the model, the function or the solver: one
 solution type for every function, model, problem type and solver of those types. A
 `Trajectory{Vector{T}, Float64}`; `sol(τ)` is `at(sol, τ)`: by the solver's interpolant where the solve kept
@@ -1091,9 +1087,9 @@ step_dt_reset!(i::Tsit5Integrator) = (i.dt_reset = true; nothing)
 @implement StepView{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M}
 @implement CoreIntegrator{Vector{T},Float64} Tsit5Integrator{T,M} where {T,M} begin
     advance!(i) = tsit5_advance!(i)
-    core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf, kept_interpolant(_steps(i.dense)))
+    core_solution(i) = CoreSolution{T}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf, _steps(i.dense))
 end
-"A solver's kept steps, or `nothing` where it kept none or took no step."
+"A solver's steps, which the solution keeps as given (a plain member of `Interpolant`), or `nothing` where it kept none or took no step."
 _steps(::Nothing) = nothing
 _steps(d) = isempty(d.t0) ? nothing : d
 "A driver's return code: `:Terminated`, `:MaxIters`, `:Success` at the span's end, `:Default` while it runs."

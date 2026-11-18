@@ -21,8 +21,9 @@ Beside them:
 - **The user's function is erased by default.** `ODEProblem(f, u0, tspan, p)` boxes a plain function, `Dynamic{Callable{…}}`, so the solver is compiled once per state and parameter type. `ODEProblem(compiled_for(f), …)` passes the wrapper, and the solver is compiled for `f`. The problem keeps the form given; so do the callbacks' records (`lib/ODECore/src/frontend.jl`, `src/core.jl`).
 - **Boxes where code is compiled once:** a callback sees the integrator as a `Dynamic{IntegratorView{U, T, P}}`; the step callbacks see a `Dynamic{StepView}`; the integrator keeps its core as a `Dynamic{CoreIntegrator}`; a problem's names are a `Dynamic{IndexProvider{Symbol}}`.
 - `IndexProvider` erases by default (`@default_dynamic`, `lib/TraitIndexing`).
-- The tests bind the wrapper's function with `using TraitWorld.ByType: compiled_for` (`test/runtests.jl`).
-- Not yet on the design's one way to erase: `kept_interpolant` keeps a solver's steps with `keep` (`lib/ODECore/src/core.jl`); `Rodas5`'s docstring describes the cast `with_dynamic(ls)` (`lib/TraitRodas/src/rodas5.jl`); every trait module writes the module option `first_seen = false` (`src/TraitDifferentialEquations.jl` and each package under `lib/`). These are recorded as deviations T-127 and T-128 of the traits reference.
+- **Storage keeps the form given:** a solution holds its solver's steps as the solver made them, a plain member in a field typed by `Interpolant`; `Rodas5(linsolve = ls)` keeps its linear solver as given, so the solver is compiled per linear solver, or once for every linear solver with the box `Dynamic{LinearSolver}(ls)`.
+- The tests and the REPL session (`scripts/session.jl`) bind the wrapper's function with `using TraitWorld.ByType: compiled_for`: the library's exported `compiled_for` is still Julia's cast (deviation T-126 of the traits reference).
+- Every trait module writes `@trait_module first_seen = false` (`src/TraitDifferentialEquations.jl` and each package under `lib/`): a trait argument is compiled as Julia compiles it. The library's `@trait_module` sets the option `first_seen` unless it is written, which compiles a trait argument once at a call whose caller does not know the value's type. This is deviation T-127 of the traits reference; the lines go when the library's default follows the design.
 
 ## Running
 
@@ -47,6 +48,7 @@ The current numbers, each against plain Julia or Python, are in the design repos
 | 2026-11-08 | `unified` 350c5b1c59, TraitWorld d897223 | 32 testsets pass, 3 checks broken (C-54) | `logs/unified/test-9.log` (each file run on its own), `logs/unified/test-final.log` (`Pkg.test`) |
 | 2026-11-08 | `unified` ef93ff7844 (W-128's build B2: C-54 for `X{T}`), TraitWorld c4f9f99 | 32 testsets pass, none broken: the function is kept `Dynamic` by default; Rodas5 with a chunk size enters the problem's plain function (the core problem carries it) | `logs/unified/test-b2.log` (`Pkg.test`) |
 | 2026-11-10 | `unified` 36b653bb3b, TraitWorld 048c44e; the top module a trait module (E-357) | 34 testsets pass, none broken | `logs/unified/test-front-trait-module.log` |
+| 2026-11-18 | `next` 02139b2168, TraitWorld 3e64ede (W-156) | 35 testsets pass; the REPL session 14 checks ok, its results equal the plain session's | `../experiments/implementation/w156/logs/after-tde.log`, `after-tde-session.log` |
 
 ## The design
 

@@ -5,7 +5,7 @@ Rodas5 with the problem's `jacobian!` (`chunk_size = nothing`: TDE's `ODEProblem
 of `DUAL_CHUNK`), or with the problem's plain function (`rhs_function`) entered at `init` at the duals
 of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`). Its linear
 systems are solved by `linsolve`, any `LinearSolver` (stage C): kept as the user's object, so the solver is
-compiled per linear solver, or `with_dynamic(ls)`, compiled once for every linear solver.
+compiled per linear solver, or the box `Dynamic{LinearSolver}(ls)`, compiled once for every linear solver.
 """
 struct Rodas5{L <: LinearSolver}
     chunk_size::Union{Nothing,Int}
@@ -77,7 +77,7 @@ function dual_jacobian!(jc::DualJacobian{N}, J::Matrix{Float64}, u::Vector{Float
     end
     return nothing
 end
-"Enter the plain function `f` at the duals of chunk `N` (`f` as given: a cast or a kept value keeps its attribute)."
+"Enter the plain function `f` at the duals of chunk `N` (`f` as given: a box or a wrapper keeps its form)."
 Base.@nospecializeinfer dual_jacobian(@nospecialize(f), n::Int, ::Val{N}) where {N} =
     DualJacobian(f, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
 
@@ -165,7 +165,7 @@ step_dt_reset!(i::Rodas5Integrator) = (i.dt_reset = true; nothing)
 @implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M} begin
     advance!(i) = rodas5_advance!(i)
     core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf,
-                                             kept_interpolant(_steps(i.dense)))
+                                             _steps(i.dense))
 end
 
 "One Rodas5 step of size `dt` from `i.u`: the candidate in `i.unew`, the interpolant's k's in `i.kint`; returns the error estimate."

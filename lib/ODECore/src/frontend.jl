@@ -11,8 +11,8 @@ object, a Jacobian prototype. Each defaults to what `f` carries (`HasMassMatrix`
 `HasJacobianPrototype`; the identity, `nothing`, `nothing` otherwise), so `ODEFunction(model)` keeps a
 callable model's properties. A plain record: it has no parameter for the state's or the parameters'
 type, so it keeps the functions as given; `ODEProblem` enters them at its bounded parameters, where those
-types are known, at `Callable`'s default, `Dynamic` (a cast on a function inside the record does not reach
-there: open issue 159). It is callable as `f` is (SciML's is), and carries its properties (it implements the
+types are known, in the form the record holds them: a plain function boxed, `Callable`'s default, a wrapper
+kept (open issue 159). It is callable as `f` is (SciML's is), and carries its properties (it implements the
 three traits).
 """
 struct ODEFunction{F,TJ,TMM}
@@ -131,7 +131,7 @@ _promote_state(u0::Vector, p) = u0
     remake(prob::ODEProblem; u0 = prob.u0, tspan = prob.tspan, p = prob.p, callback)
 
 SciML's `remake`: a problem like `prob` with the fields given changed. The user's functions are taken back from
-the problem with their attributes (a compiled function stays compiled) and entered again at the new problem's
+the problem in the forms it keeps them (a wrapped function stays wrapped) and entered again at the new problem's
 types, partially evaluated on the new parameters; the system object, the mass matrix, the Jacobian prototype and
 (unless `callback` is given) the callbacks are kept. The state takes the parameters' dual type, as in
 `ODEProblem`.

@@ -203,7 +203,7 @@ end
     NonlinearPolyalg(algs...)
     NonlinearPolyalg()
 
-A polyalgorithm: its members (any `NonlinearAlgorithm`s, kept with their attributes, so its type has no axis for
+A polyalgorithm: its members (any `NonlinearAlgorithm`s, kept in the forms given, so its type has no axis for
 them) tried in turn from the guess until one succeeds; else the result with the smallest residual, with its return
 code. The default, `NonlinearPolyalg()`, is Newton–Raphson, then Newton–Raphson with a line search, then the
 trust region (NonlinearSolve's default polyalgorithm's Jacobian-based members); `solve(prob)` uses it.

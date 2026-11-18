@@ -37,7 +37,7 @@ end
         @test e isa ArgumentError && occursin("mass matrix", sprint(showerror, e))
         @test caught(() -> init(pm, alg)) isa ArgumentError
     end
-    # through ODEFunction, and through a cast of the model
+    # through ODEFunction, and through the model's wrapper
     @test caught(() -> solve(ODEProblem(ODEFunction(m), [1.0, 1.0], (0.0, 1.0)), Rodas5())) isa ArgumentError
     @test caught(() -> solve(ODEProblem(compiled_for(m), [1.0, 1.0], (0.0, 1.0)), Tsit5())) isa ArgumentError
     # the identity is an ODE: solved

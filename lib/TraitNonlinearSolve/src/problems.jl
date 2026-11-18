@@ -116,7 +116,7 @@ const NL_NO_JACOBIAN = Compiled(nl_no_jacobian)
 const NLNoJacobian = typeof(NL_NO_JACOBIAN)
 
 # a user's function partially evaluated, as a plain record (a kept function: its object); `_nlproblem` keeps it at
-# `Callable`'s default, `Dynamic` (the front end takes no cast: open issue 159)
+# `Callable`'s default, `Dynamic` (open issue 159)
 Base.@nospecializeinfer _nlpartial(@nospecialize(f), p) = NLPartial(f isa Dynamic ? unwrap(f) : f, p)
 Base.@nospecializeinfer _attime(@nospecialize(f), p, t::Float64) = AtTime(f isa Dynamic ? unwrap(f) : f, p, t)
 
@@ -281,8 +281,8 @@ end
 """
     NonlinearSolution{T, P}
 
-A nonlinear problem's solution as the user sees it: `u`, `resid`, `retcode`, `stats`, the problem kept with its
-attribute (`sol.prob`, a field typed `NonlinearProblemTrait{T, P}`: no axis for its function or type), and the system
+A nonlinear problem's solution as the user sees it: `u`, `resid`, `retcode`, `stats`, the problem kept in the
+form given (`sol.prob`, a field typed `NonlinearProblemTrait{T, P}`: no axis for its function or type), and the system
 object its function carried (`HasSystem`, `getsystem(sol)`).
 """
 struct NonlinearSolution{T,P}

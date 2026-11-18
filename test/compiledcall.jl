@@ -15,11 +15,10 @@ end
     sd = solve(prob, Tsit5(); abstol = 1e-12, reltol = 1e-12)
     sc = solve(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), Tsit5(); abstol = 1e-12, reltol = 1e-12)
     @test sc.u == sd.u && isapprox(sc.u[end], REF; rtol = 1e-10)
-    # a stored function, `Dynamic{Callable{…}}`, and the caller's `with_dynamic`
+    # the caller's box, `Dynamic{Callable{…}}`
     S = TraitDifferentialEquations.RHSSig{Vector{Float64},Float64}
     @test solve(ODEProblem(Dynamic{Callable{S,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u == solve(prob, Tsit5()).u
-    @test solve(ODEProblem(with_dynamic(lorenz!), U0, (0.0, 1.0), P0), Tsit5()).u == solve(prob, Tsit5()).u
-    @test solve(ODEProblem(with_dynamic(lorenz!), U0, (0.0, 1.0), P0), Rodas5()).u == solve(prob, Rodas5()).u   # the Jacobian at the duals, Dynamic too
+    @test solve(ODEProblem(Dynamic{Callable{S,Nothing}}(lorenz!), U0, (0.0, 1.0), P0), Rodas5()).u == solve(prob, Rodas5()).u   # the Jacobian at the duals, boxed too
     # a closure with captured state, and a problem without parameters
     k = 0.5
     s0 = solve(ODEProblem(compiled_for((du, u, p, t) -> (du .= -k .* u; nothing)), [1.0], (0.0, 1.0)), Tsit5(); abstol = 1e-10, reltol = 1e-10)
@@ -28,7 +27,7 @@ end
     kick = DiscreteCallback((u, t, i) -> t > 0.5 && t < 0.6, i -> (i.u[1] += 1.0; nothing))
     @test solve(ODEProblem(compiled_for(lorenz!), U0, (0.0, 1.0), P0), Tsit5(); callback = kick).u ==
           solve(prob, Tsit5(); callback = kick).u
-    # the attribute is a choice of speed, never of correctness: Float32 states, Rodas5 and gradients
+    # the kept form is a choice of speed, never of correctness: Float32 states, Rodas5 and gradients
     # give the same results compiled and dynamic
     P32, U32 = Float32.(P0), Float32.(U0)
     @test solve(ODEProblem(compiled_for(lorenz!), U32, (0.0, 1.0), P32), Tsit5()).u == solve(ODEProblem(lorenz!, U32, (0.0, 1.0), P32), Tsit5()).u
