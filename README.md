@@ -22,8 +22,6 @@ Beside them:
 - **Boxes where code is compiled once:** a callback sees the integrator as a `Dynamic{IntegratorView{U, T, P}}`; the step callbacks see a `Dynamic{StepView}`; the integrator keeps its core as a `Dynamic{CoreIntegrator}`; a problem's names are a `Dynamic{IndexProvider{Symbol}}`.
 - `IndexProvider` erases by default (`@default_dynamic`, `lib/TraitIndexing`).
 - **Storage keeps the form given:** a solution holds its solver's steps as the solver made them, a plain member in a field typed by `Interpolant`; `Rodas5(linsolve = ls)` keeps its linear solver as given, so the solver is compiled per linear solver, or once for every linear solver with the box `Dynamic{LinearSolver}(ls)`.
-- The tests and the REPL session (`scripts/session.jl`) bind the wrapper's function with `using TraitWorld.ByType: compiled_for`: the library's exported `compiled_for` is still Julia's cast (deviation T-126 of the traits reference).
-- Every trait module writes `@trait_module first_seen = false` (`src/TraitDifferentialEquations.jl` and each package under `lib/`): a trait argument is compiled as Julia compiles it. The library's `@trait_module` sets the option `first_seen` unless it is written, which compiles a trait argument once at a call whose caller does not know the value's type. This is deviation T-127 of the traits reference; the lines go when the library's default follows the design.
 
 ## Running
 

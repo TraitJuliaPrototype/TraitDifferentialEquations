@@ -8,7 +8,7 @@ TraitDifferentialEquations, re-exports them.
 """
 module ODECore
 using TraitWorld
-@trait_module first_seen = false
+@trait_module
 include("core.jl")
 include("frontend.jl")
 end

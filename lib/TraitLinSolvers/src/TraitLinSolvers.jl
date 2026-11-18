@@ -7,7 +7,7 @@ any solver package knows the other.
 """
 module TraitLinSolvers
 using TraitWorld
-@trait_module first_seen = false
+@trait_module
 using ODECore: LinearSolver
 import ODECore: linfactor
 import LinearAlgebra

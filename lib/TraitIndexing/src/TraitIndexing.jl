@@ -13,7 +13,7 @@ index shape, not per provider. `SymbolCache` is SciML's record of names.
 """
 module TraitIndexing
 using TraitWorld
-@trait_module first_seen = false
+@trait_module
 export IndexProvider, variable_index, parameter_index, observed, ValueProvider, state_values, parameter_values,
        current_time, SeriesProvider, series_times, series_state, series_parameters, HasSystem, system, getsystem,
        SymbolCache, getstate, getparam, ParameterView, getu, getter, Getter

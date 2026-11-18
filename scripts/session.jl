@@ -16,7 +16,6 @@ LIB in ("trait", "plain") || error("usage: session.jl trait|plain")
 "Each entry: the libraries it is for, and its code. `@lib` stands for the solver package."
 const ENTRIES = Tuple{Symbol,String}[
     (:trait, "using TraitDifferentialEquations, TraitWorld, LorenzModels; const Lib = TraitDifferentialEquations"),
-    (:trait, "using TraitWorld.ByType: compiled_for   # the wrapper, a value (the library's export is still the cast: traits T-126)"),
     (:plain, "using PlainODE, PlainLorenzModels; const Lib = PlainODE"),
     (:both, """
      const nfail = Ref(0)

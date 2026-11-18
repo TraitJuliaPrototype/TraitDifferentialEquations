@@ -1,5 +1,4 @@
 using Test, TraitDifferentialEquations, TraitWorld
-using TraitWorld.ByType: compiled_for       # `compiled_for(x)`: the wrapper, a value (W-151; traits §7.6: the name is bound)
 const ForwardDiff = TraitDifferentialEquations.ForwardDiff
 
 lorenz!(du, u, p, t) = (du[1] = p[1] * (u[2] - u[1]); du[2] = u[1] * (p[2] - u[3]) - u[2]; du[3] = u[1] * u[2] - p[3] * u[3]; nothing)

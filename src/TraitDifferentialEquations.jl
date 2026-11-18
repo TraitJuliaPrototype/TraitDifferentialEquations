@@ -12,7 +12,7 @@ DifferentialEquations.jl is: it re-exports them, keeps callbacks and options, an
 """
 module TraitDifferentialEquations
 using TraitWorld
-@trait_module first_seen = false
+@trait_module
 import ForwardDiff
 import ODECore                       # the core, a package of its own (move 3): `TraitDifferentialEquations.ODECore`
 using ODECore
