@@ -21,10 +21,12 @@ _nloptions(; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) = NLOptions(Floa
 
 A nonlinear solver: NonlinearSolve's algorithms, an open set. A solver package implements it for its own algorithm
 type. `solve_nl(a, m, opts)` solves the core's problem `m` (its parameters partially evaluated, W-63) through
-`nl_residual!` and `nl_core_jacobian!`, and returns an `NLCoreSolution`.
+`nl_residual!` and `nl_core_jacobian!`, and returns an `NLCoreSolution` at the problem's element type: the
+operation's variable `T` is fixed by `m` (traits reference §4.1), so a caller that knows the problem knows the
+solution's type, at a box of the algorithm too.
 """
 @trait NonlinearAlgorithm begin
-    solve_nl(a::NonlinearAlgorithm, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
+    solve_nl(a::NonlinearAlgorithm, m::NLCoreProblem{T}, opts::NLOptions)::NLCoreSolution{T} where {T}
 end
 
 """
@@ -81,7 +83,7 @@ NewtonRaphson(; linsolve = DenseLU(), linesearch = false) = NewtonRaphson(linsol
     solve_nl(a, m, opts) = newton_raphson(a.linsolve, a.linesearch, m, opts)
 end
 
-function newton_raphson(ls::LinearSolver, linesearch::Bool, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
+function newton_raphson(ls::LinearSolver, linesearch::Bool, m::NLCoreProblem{T}, opts::NLOptions)::NLCoreSolution{T} where {T}
     _float64_only(m, "NewtonRaphson")
     x = copy(m.u0)::Vector{Float64}
     n = length(x)
@@ -131,7 +133,7 @@ TrustRegion(; linsolve = DenseLU(), initial_radius = 1.0, max_radius = 1e4) =
     solve_nl(a, m, opts) = trust_region(a.linsolve, a.initial_radius, a.max_radius, m, opts)
 end
 
-function trust_region(ls::LinearSolver, Δ0::Float64, Δmax::Float64, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
+function trust_region(ls::LinearSolver, Δ0::Float64, Δmax::Float64, m::NLCoreProblem{T}, opts::NLOptions)::NLCoreSolution{T} where {T}
     _float64_only(m, "TrustRegion")
     x = copy(m.u0)::Vector{Float64}
     n = length(x)
@@ -223,12 +225,12 @@ NonlinearPolyalg() = NonlinearPolyalg(NewtonRaphson(), NewtonRaphson(linesearch 
 @implement NonlinearAlgorithm NonlinearPolyalg begin
     solve_nl(a, m, opts) = polyalg_solve(a.algs, m, opts)
 end
-function polyalg_solve(algs::Vector{NonlinearAlgorithm}, m::NLCoreProblem, opts::NLOptions)::NLCoreSolution
+function polyalg_solve(algs::Vector{NonlinearAlgorithm}, m::NLCoreProblem{T}, opts::NLOptions)::NLCoreSolution{T} where {T}
     isempty(algs) && throw(ArgumentError("a polyalgorithm without members"))
     best = nothing
     stats = NLStats(0, 0, 0, 0)
     for alg in algs
-        s = solve_nl(alg, m, opts)::NLCoreSolution
+        s = solve_nl(alg, m, opts)::NLCoreSolution{T}
         stats = stats + s.stats
         if successful_retcode(s.retcode)
             return typeof(s)(s.u, s.resid, s.retcode, stats)
