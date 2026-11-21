@@ -53,17 +53,14 @@ the problem's type nor the algorithm's. What is compiled once is decided by the 
 (`ODEProblem`), not by keeping the compiler from this code.
 """
 solve(prob, alg; callback = nothing, kw...) = _solve(prob, alg, callback, values(kw))
-# by the algorithm's trait (SciML's one `solve` for every kind of problem); an algorithm of both traits counts as
-# nonlinear
+# by the algorithm's trait and the problem's (SciML's one `solve` for every kind of problem); for a nonlinear problem
+# an algorithm of both traits counts as nonlinear
 # the callbacks as given (`nothing`, one, a tuple, a vector): `solve_ode` enters them at the problem's types
 _solve(prob, alg::ODEAlgorithm, callback, kw::NamedTuple) = solve_ode(prob, alg, callback, _options(; kw...))
-_solve(prob, alg::NonlinearAlgorithm, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
-_solve(prob, alg::All{ODEAlgorithm, NonlinearAlgorithm}, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
-"""
-The forwarding to TraitNonlinearSolve: neither specialized nor inferred on the keywords, so a caller that infers `solve`
-at its keywords' types does not infer the nonlinear front end too.
-"""
-Base.@nospecializeinfer _solve_nonlinear(@nospecialize(prob), @nospecialize(alg), @nospecialize(kw::NamedTuple)) =
+# a nonlinear algorithm: TraitNonlinearSolve's front end, typed as `solve_ode` is
+_solve(prob::NonlinearProblemTrait, alg::NonlinearAlgorithm, @nospecialize(callback), kw::NamedTuple) =
+    TraitNonlinearSolve.solve(prob, alg; kw...)
+_solve(prob::NonlinearProblemTrait, alg::All{ODEAlgorithm, NonlinearAlgorithm}, @nospecialize(callback), kw::NamedTuple) =
     TraitNonlinearSolve.solve(prob, alg; kw...)
 """
 The default algorithm (move 3, check 4): Tsit5; for a nonlinear problem (`NonlinearProblemTrait`), the

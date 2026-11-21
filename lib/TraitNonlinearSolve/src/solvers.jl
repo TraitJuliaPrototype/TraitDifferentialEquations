@@ -14,7 +14,6 @@ struct NLOptions
     maxiters::Int
 end
 const NL_TOL = eps(Float64)^(4 / 5)
-_nloptions(; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) = NLOptions(Float64(abstol), Float64(reltol), Int(maxiters))
 
 """
     NonlinearAlgorithm
@@ -30,14 +29,22 @@ solution's type, at a box of the algorithm too.
 end
 
 """
-    solve(prob, alg = NonlinearPolyalg(); abstol, reltol, maxiters) -> NonlinearSolution
+    solve(prob, alg = NonlinearPolyalg(); abstol, reltol, maxiters) -> NonlinearSolution{T, P}
 
 Solve a problem of any type that implements `NonlinearProblemTrait` (TDE's `NonlinearProblem`, a
 `SteadyStateProblem`, a problem type of its own) with any `NonlinearAlgorithm`. The package's front end; the
-umbrella's `solve` forwards a nonlinear algorithm here. Neither specialized nor inferred on the problem's type.
+umbrella's `solve` forwards a nonlinear algorithm here.
+
+The front end is typed, as the ODE core's: the problem and the algorithm by their traits, and a caller's code knows
+the solution's type, `NonlinearSolution{T, P}`, which names neither the problem's type nor the algorithm's. What is
+compiled once is decided by the problem's function's form: `NonlinearProblem` keeps a plain function boxed, one
+problem type for every function, so a new residual compiles itself only; `compiled_for(f)` compiles the solver for it.
 """
-Base.@nospecializeinfer solve(@nospecialize(prob), @nospecialize(alg); kw...) = solve_nonlinear(prob, alg, _nloptions(; kw...))
-Base.@nospecializeinfer solve(@nospecialize(prob); kw...) = solve(prob, NonlinearPolyalg(); kw...)
+# the options at their declared types: `Float64(x)` of a keyword the code does not know has no declared result
+solve(prob::NonlinearProblemTrait, alg::NonlinearAlgorithm; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) =
+    solve_nonlinear(prob, alg, NLOptions(Float64(abstol)::Float64, Float64(reltol)::Float64, Int(maxiters)::Int))
+solve(prob::NonlinearProblemTrait; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) =
+    solve(prob, NonlinearPolyalg(); abstol, reltol, maxiters)
 # Whether a value is a nonlinear algorithm or problem, by its trait: bounded methods with an untyped fallback after them
 # (traits §5.5; lowering L-3), for a front end that serves several kinds (the umbrella's `solve`). By dispatch, not by
 # `conforms`: a caller that infers the front end would otherwise infer TraitWorld's membership lookup (E-242).
@@ -49,7 +56,7 @@ is_nonlinear_problem(prob::NonlinearProblemTrait) = true
 is_nonlinear_problem(prob) = false
 
 "The outer layer: the problem's functions partially evaluated (`nl_core`), the algorithm, the solution with its problem."
-Base.@nospecializeinfer solve_nonlinear(@nospecialize(prob), alg::NonlinearAlgorithm, opts::NLOptions) =
+solve_nonlinear(prob::NonlinearProblemTrait{T,P}, alg::NonlinearAlgorithm, opts::NLOptions) where {T,P} =
     nl_with_problem(solve_nl(alg, nl_core(prob), opts), prob, ODECore._system(prob))
 
 _maxabs(x::Vector{Float64}) = maximum(abs, x; init = 0.0)
