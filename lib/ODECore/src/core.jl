@@ -6,8 +6,8 @@
 #     as a `Dynamic{Callable{…}}` (`Callable`'s default), so the solver compiles once per element and
 #     parameter type, whatever the function; given as the wrapper, `compiled_for(f)`, the function's own
 #     type, and the solver compiles per function;
-#   - callbacks are entered at the problem's types at a solver's `init` and stored by their trait
-#     (`Vector{Callback{U, T, P}}`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
+#   - callbacks are entered at the problem's types where those are known (the problem's constructor, `solve`,
+#     `init`) and stored by their trait (`Vector{Callback{U, T, P}}`, `EnteredCallbacks`); they see the integrator as a `Dynamic{IntegratorView{U, T, P}}`,
 #     so a new callback compiles nothing in the solver, only its own methods at the integrator's box,
 #     and a callback reads `integ.p` at the problem's parameter type;
 #   - a solution is a `Trajectory{U, T}` (TraitArrayTools') and keeps its problem in the form given: code over
@@ -30,7 +30,7 @@ import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, CoreSolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
-       DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
+       DiscreteCallback, ContinuousCallback, FunctionEventCallback, EnteredCallbacks, enter_callbacks, enter_callbacks!,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
        NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, StepCallbacks,
        enter_step_callback!, ParamIntegrator,
@@ -143,6 +143,21 @@ falls (SciML's `affect!` and `affect_neg!`; by default the same). Every crossing
     event_affect_neg!(cb::EventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = event_affect!(cb, integ)
     event_initialize!(cb::EventCallback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = nothing
 end
+
+"""
+    EnteredCallbacks{U, T, P}
+
+The user's callbacks entered at a problem's types `(U, T, P)`: the discrete ones in a `Vector{Callback{U, T, P}}`,
+the continuous ones in a `Vector{EventCallback{U, T, P}}`. Storage typed by the traits (traits reference §8.1): each
+callback is kept in the form it was given, and code over the record is fully typed (§14). Made by `enter_callbacks`
+where the problem's types are known: `ODEProblem` keeps its callbacks so, `solve` and `init` enter theirs.
+"""
+struct EnteredCallbacks{U,T,P}
+    discrete::Vector{Callback{U,T,P}}
+    continuous::Vector{EventCallback{U,T,P}}
+end
+EnteredCallbacks{U,T,P}() where {U,T,P} = EnteredCallbacks{U,T,P}(Callback{U,T,P}[], EventCallback{U,T,P}[])
+Base.isempty(e::EnteredCallbacks) = isempty(e.discrete) && isempty(e.continuous)
 
 """
     StepView{U, T}
@@ -294,11 +309,12 @@ end
 """
     HasCallbacks
 
-A problem that keeps callbacks (SciML's `ODEProblem(…; callback)`): `solve` and `init` take them before the
-ones they are given.
+A problem that keeps callbacks (SciML's `ODEProblem(…; callback)`), in any form `enter_callbacks` takes (`nothing`,
+one, a tuple, a vector, callbacks entered already): `solve` and `init` enter them at the problem's types, before the
+ones they are given. TDE's `ODEProblem` keeps them entered (`EnteredCallbacks`).
 """
 @trait HasCallbacks begin
-    problem_callbacks(x::HasCallbacks)::Vector{Any}
+    problem_callbacks(x::HasCallbacks)::Any
 end
 
 
@@ -331,7 +347,7 @@ _is_identity(@nospecialize(M)) = false
 _jac_prototype(@nospecialize(x)) = nothing
 _jac_prototype(x::HasJacobianPrototype) = jac_prototype(x)
 "The callbacks a problem keeps (`HasCallbacks`), or none."
-_problem_callbacks(@nospecialize(x)) = Any[]
+_problem_callbacks(@nospecialize(x)) = nothing
 _problem_callbacks(x::HasCallbacks) = problem_callbacks(x)
 "A system's names, where it provides them (`IndexProvider{Symbol}`), kept `Dynamic`; else `nothing`."
 _names(@nospecialize(s)) = nothing
@@ -429,7 +445,7 @@ whatever the function and the parameters:
 `p` is what callbacks see as `integ.p`, the same object the kept functions hold. The optional properties
 its function carried (open issue 119), each read at the front end and kept as given: the system object
 (`HasSystem`) with its names where it provides them, the mass matrix (`HasMassMatrix`), the Jacobian
-prototype (`HasJacobianPrototype`); and the callbacks it keeps (`HasCallbacks`). Made by the front end
+prototype (`HasJacobianPrototype`); and the callbacks it keeps (`HasCallbacks`), entered at its types. Made by the front end
 `ODEProblem(f, u0, tspan, p; callback)`.
 """
 struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T},Nothing}}
@@ -445,7 +461,7 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     mass_matrix::Any                               # the identity, or the function's
     mass_identity::Bool                            # whether it is the identity: then the problem is an ODE
     jac_prototype::Any                             # nothing, or the function's
-    callbacks::Vector{Any}                         # the callbacks it keeps
+    callbacks::EnteredCallbacks{Vector{T},Float64,P}   # the callbacks it keeps, entered at its types
 end
 "No Jacobian given (the four-argument form, for a user's `ODEFunction`; never called)."
 no_jacobian(J, u, p, t) = nothing
@@ -617,36 +633,55 @@ event_initialize!(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{I
 @implement EventCallback{U,T,P} FunctionEventCallback{U,T,P,C,A,N,I} where {U,T,P,C,A,N,I}
 
 """
-    enter_callbacks(cbs, U, P) -> (discrete, continuous)
+    enter_callbacks(cbs, U, P) -> EnteredCallbacks{U, Float64, P}
+    enter_callbacks!(e, cbs) -> e
 
-A solver's `init` step for callbacks: the user's callbacks entered at the problem's types `(U, Float64, P)`.
+The user's callbacks entered at a problem's types `(U, Float64, P)`, where those types are known (`ODEProblem`'s
+constructor, `solve`, `init`). `cbs` is `nothing`, one callback, a tuple, a vector, or callbacks entered already.
 A `DiscreteCallback` or `ContinuousCallback` becomes a record of its functions at the signatures, each in the form
 it was given (`FunctionCallback`, `FunctionEventCallback`); a value of a callback type is stored as it is, refused
-if it does not conform at these types. The integrator keeps the two vectors.
+if it does not conform at these types. Where the caller's code knows the callbacks' types (none, one, a tuple, a
+vector of one type) the entry is fully typed (traits reference §14): a tuple is entered item by item at each item's
+type. A `Vector{Any}` is the caller's own: each item is dispatched when it runs. Callbacks entered at other types
+are entered again from the functions they keep (`remake` at new parameters).
 """
-function enter_callbacks(cbs::Vector{Any}, ::Type{U}, ::Type{P}) where {U,P}
-    T = Float64
-    d = Callback{U,T,P}[]
-    c = EventCallback{U,T,P}[]
-    for cb in cbs
-        if cb isa DiscreteCallback
-            push!(d, FunctionCallback{U,T,P}(cb.condition, cb.affect!, cb.initialize))
-        elseif cb isa ContinuousCallback
-            push!(c, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!, cb.affect_neg!, cb.initialize))
-        else
-            _enter_callback!(d, c, cb)
-        end
-    end
-    return d, c
+enter_callbacks(cbs, ::Type{U}, ::Type{P}) where {U,P} = enter_callbacks!(EnteredCallbacks{U,Float64,P}(), cbs)
+enter_callbacks!(e::EnteredCallbacks, ::Nothing) = e
+enter_callbacks!(e::EnteredCallbacks, cbs::Tuple) = (_enter_each!(e, cbs...); e)
+enter_callbacks!(e::EnteredCallbacks, cbs::AbstractVector) = (for cb in cbs; _enter_callback!(e, cb); end; e)
+enter_callbacks!(e::EnteredCallbacks{U,T,P}, cbs::EnteredCallbacks{U,T,P}) where {U,T,P} =
+    (append!(e.discrete, cbs.discrete); append!(e.continuous, cbs.continuous); e)
+function enter_callbacks!(e::EnteredCallbacks, cbs::EnteredCallbacks)
+    for cb in cbs.discrete; _enter_callback!(e, cb); end
+    for cb in cbs.continuous; _enter_callback!(e, cb); end
+    return e
 end
+enter_callbacks!(e::EnteredCallbacks, cb) = (_enter_callback!(e, cb); e)
+_enter_each!(e::EnteredCallbacks) = nothing
+_enter_each!(e::EnteredCallbacks, cb, cbs...) = (_enter_callback!(e, cb); _enter_each!(e, cbs...))
+# SciML's records: their functions at the signatures, each in the form given (the constructors' forwarders box a
+# plain function, `Callable`'s default)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::DiscreteCallback) where {U,T,P} =
+    (push!(e.discrete, FunctionCallback{U,T,P}(cb.condition, cb.affect!, cb.initialize)); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::ContinuousCallback) where {U,T,P} =
+    (push!(e.continuous, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!, cb.affect_neg!, cb.initialize)); nothing)
 # a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which takes a
 # plain member, a box and a wrapper alike; a value of both traits is a continuous one
-_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::EventCallback{U,T,P}) where {U,T,P} =
-    (push!(c, cb); nothing)
-_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::Callback{U,T,P}) where {U,T,P} =
-    (push!(d, cb); nothing)
-_enter_callback!(d::Vector{Callback{U,T,P}}, c::Vector{EventCallback{U,T,P}}, cb::All{EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
-    (push!(c, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::EventCallback{U,T,P}) where {U,T,P} = (push!(e.continuous, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::Callback{U,T,P}) where {U,T,P} = (push!(e.discrete, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::All{EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
+    (push!(e.continuous, cb); nothing)
+# SciML's records entered at other types: entered again from the functions they keep (a box's function; a
+# wrapper as it is), at the new types; at their own types, kept
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::FunctionCallback{U,T,P}) where {U,T,P} = (push!(e.discrete, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::FunctionEventCallback{U,T,P}) where {U,T,P} = (push!(e.continuous, cb); nothing)
+_enter_callback!(e::EnteredCallbacks, cb::FunctionCallback) =
+    _enter_callback!(e, DiscreteCallback(_given(cb.cond), _given(cb.aff); initialize = _given(cb.init)))
+_enter_callback!(e::EnteredCallbacks, cb::FunctionEventCallback) =
+    _enter_callback!(e, ContinuousCallback(_given(cb.cond), _given(cb.aff), _given(cb.affneg); initialize = _given(cb.init)))
+"A function as it was given to a callback: a box's object (the box was made at the old signature), else the value."
+_given(k::Dynamic) = unwrap(k)
+_given(@nospecialize(k)) = k
 
 """
     ParamIntegrator{U, T, P}
@@ -753,18 +788,17 @@ end
     adapt_callbacks(cbs, U, p) -> StepCallbacks{U, Float64}
     adapt_callbacks!(pi, cbs) -> StepCallbacks{U, Float64}
 
-The outer layer's step for callbacks (W-63): the user's callbacks entered at the problem's types
+The outer layer's step for callbacks (W-63): the user's callbacks, entered at the problem's types
 `(U, Float64, P)` (`enter_callbacks`), each adapted to the solver core, which sees them as
 `StepCallback{U, Float64}` and `StepEvent{U, Float64}`, without the parameters. They share the integrator `pi`.
 """
-adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P) where {U,P} =
-    adapt_callbacks!(param_integrator(U, p, 0.0, nothing, nothing, false), cbs)
-function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::Vector{Any}) where {U,T,P}
-    d, c = enter_callbacks(cbs, U, P)
+adapt_callbacks(cbs, ::Type{U}, p::P) where {U,P} =
+    adapt_callbacks!(param_integrator(U, p, 0.0, nothing, nothing, false), enter_callbacks(cbs, U, P))
+function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::EnteredCallbacks{U,T,P}) where {U,T,P}
     view = Dynamic{IntegratorView{U,T,P}}(pi)
     out = StepCallbacks{U,T}()
-    for k in d; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)); end
-    for k in c; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)); end
+    for k in cbs.discrete; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)); end
+    for k in cbs.continuous; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)); end
     return out
 end
 
@@ -1220,9 +1254,9 @@ _has_identity_mass(prob) = _is_identity(_mass_matrix(prob))::Bool
     "or its own `HasMassMatrix`): a DAE, which solving as an ODE would get wrong. Use an algorithm that takes " *
     "mass matrices (`takes_mass_matrix`)."))
 "The callbacks of a solve: the problem's (`HasCallbacks`), then the ones given (SciML's `CallbackSet(prob.callback, callback)`)."
-function _all_callbacks(prob, callbacks::Vector{Any})
-    pc = _problem_callbacks(prob)::Vector{Any}
-    return isempty(pc) ? callbacks : vcat(pc, callbacks)
+function _all_callbacks(prob, given::EnteredCallbacks{U,T,P}) where {U,T,P}
+    e = enter_callbacks(_problem_callbacks(prob), U, P)
+    return isempty(e) ? given : enter_callbacks!(e, given)
 end
 "A problem's system names, as its solution and integrator keep them: TDE's own problem keeps them from its construction."
 _problem_names(prob::ODEProblem, @nospecialize(sys)) = getfield(prob, :names)
@@ -1235,14 +1269,17 @@ _no_saved(p::P) where {P} = P[]
 Solve a problem of any type that implements `ODEProblemTrait`, the outer layer (W-63): the problem's
 properties checked against the algorithm (`check_properties`), its functions partially evaluated on its
 parameters (`core_problem`), its callbacks and the user's (`DiscreteCallback`, `ContinuousCallback`, values
-of callback types) entered at the problem's types and adapted to the core (`adapt_callbacks!`), then the
+of callback types, in any form `enter_callbacks` takes) entered at the problem's types and adapted to the core
+(`adapt_callbacks!`), then the
 algorithm's driver (`solve_core`), which never sees the parameters' type. What depends on the parameters'
 type is this function and the adapters: a few constructors and closures. With callbacks, the parameters are
 saved at the start and wherever a callback calls `save_discretes!`.
 """
 # (the problem is not typed by its trait here: `core_problem` is no operation of it, and the problem's type is
 # the caller's; `with_problem` takes it at the trait)
-function solve_ode(prob, alg::ODEAlgorithm, callbacks::Vector{Any}, opts::SolverOptions)
+solve_ode(prob, alg::ODEAlgorithm, callbacks, opts::SolverOptions) =
+    solve_ode(prob, alg, enter_callbacks(callbacks, typeof(prob.u0), typeof(prob.p)), opts)
+function solve_ode(prob, alg::ODEAlgorithm, callbacks::EnteredCallbacks, opts::SolverOptions)
     check_properties(prob, alg)
     m = core_problem(prob)
     cbs = _all_callbacks(prob, callbacks)
@@ -1261,7 +1298,9 @@ SciML's `init`: as `solve_ode`, but the solver's integrator at the start of the 
 `ODEStepper`'s) is returned in the outer layer's integrator, for `step!` and `solve!`. The integrator's type
 is `ParamIntegrator{Vector{T}, Float64, P}`, whatever the algorithm, the function and the callbacks.
 """
-function init_ode(prob, alg::ODEStepper, callbacks::Vector{Any}, opts::SolverOptions)
+init_ode(prob, alg::ODEStepper, callbacks, opts::SolverOptions) =
+    init_ode(prob, alg, enter_callbacks(callbacks, typeof(prob.u0), typeof(prob.p)), opts)
+function init_ode(prob, alg::ODEStepper, callbacks::EnteredCallbacks, opts::SolverOptions)
     check_properties(prob, alg)
     m = core_problem(prob)
     cbs = _all_callbacks(prob, callbacks)

@@ -33,12 +33,6 @@ export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rod
        NonlinearProblemTrait, residual!, nl_jacobian!, NonlinearProblem, NonlinearFunction, SteadyStateProblem,
        NonlinearAlgorithm, NonlinearSolution, NewtonRaphson, TrustRegion, NonlinearPolyalg, successful_retcode, remake
 
-# the user's callbacks as given (`DiscreteCallback`, `ContinuousCallback`, values of callback types):
-# a solver's `init` enters them at the problem's types
-_cbs(::Nothing) = Any[]
-_cbs(cbs::Union{Tuple,AbstractVector}) = Any[cb for cb in cbs]
-_cbs(@nospecialize(cb)) = Any[cb]
-
 _options(; abstol = 1e-6, reltol = 1e-3, dtmax = Inf, maxiters = 100_000, saveat = Float64[], tstops = Float64[],
          dense = isempty(saveat)) =
     SolverOptions(Float64(abstol), Float64(reltol), Float64(dtmax), maxiters, Vector{Float64}(collect(saveat)),
@@ -61,7 +55,8 @@ the problem's type nor the algorithm's. What is compiled once is decided by the 
 solve(prob, alg; callback = nothing, kw...) = _solve(prob, alg, callback, values(kw))
 # by the algorithm's trait (SciML's one `solve` for every kind of problem); an algorithm of both traits counts as
 # nonlinear
-_solve(prob, alg::ODEAlgorithm, callback, kw::NamedTuple) = solve_ode(prob, alg, _cbs(callback), _options(; kw...))
+# the callbacks as given (`nothing`, one, a tuple, a vector): `solve_ode` enters them at the problem's types
+_solve(prob, alg::ODEAlgorithm, callback, kw::NamedTuple) = solve_ode(prob, alg, callback, _options(; kw...))
 _solve(prob, alg::NonlinearAlgorithm, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
 _solve(prob, alg::All{ODEAlgorithm, NonlinearAlgorithm}, @nospecialize(callback), kw::NamedTuple) = _solve_nonlinear(prob, alg, kw)
 """
@@ -88,7 +83,7 @@ and `solve!(integ)`, with the keywords of `solve`. It is what callbacks see (`In
 `integ.t`, `integ.p`, `add_tstop!`, `terminate!`, `getstate`, `getsystem`. Any algorithm that can be stepped
 (`ODEStepper`: Tsit5, Rodas5).
 """
-init(prob, alg::ODEStepper; callback = nothing, kw...) = init_ode(prob, alg, _cbs(callback), _options(; kw...))
+init(prob, alg::ODEStepper; callback = nothing, kw...) = init_ode(prob, alg, callback, _options(; kw...))
 
 # --- gradients through `solve` (row 5) --------------------------------------------------------------
 

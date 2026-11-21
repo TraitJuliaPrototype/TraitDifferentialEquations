@@ -56,7 +56,8 @@ Nothing` in the form the record holds it, and Rodas5 calls it instead of differe
 The function's optional properties are read here, from the `ODEFunction` or from the function itself
 (open issue 119): its mass matrix, system object and Jacobian prototype. The problem keeps them;
 `solve` and `init` refuse a mass matrix other than the identity for an algorithm that takes none. The
-callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take them before their own.
+callbacks given (one, a tuple or a vector) are entered at the problem's types and kept (`enter_callbacks`):
+`solve` and `init` take them before their own.
 """
 # The front end is typed: each method's result is a concrete `ODEProblem{T, P, F, J}` that its caller's code knows,
 # so a program that makes a problem and solves it is fully typed (traits §14). What is compiled once is decided by
@@ -66,7 +67,8 @@ callbacks given (one, a tuple or a vector) are kept: `solve` and `init` take the
 # forwarder that boxes a plain function (W-160); the signature's variables come from `u0` and `p`. Unbounded on purpose (§7.3):
 # an adapter, it stores the function in the form it is given
 @unbounded function ODEProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, tspan, p::P; callback = nothing) where {T,P}
-    return _problem_of(f, unwrap(f), _promote_state(_state(u0), p), _span(tspan), p, _callbacks(callback))
+    u = _promote_state(_state(u0), p)
+    return _problem_of(f, unwrap(f), u, _span(tspan), p, enter_callbacks(callback, typeof(u), typeof(p)))
 end
 # without parameters: the kept form passed on
 ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
@@ -75,19 +77,15 @@ ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan;
 _object(@nospecialize(f)) = f
 _object(f::Union{Dynamic,Compiled}) = unwrap(f)
 # a function or a model in the form `k` it was given (a box, a wrapper): its properties are the object's own
-_problem_of(k, f, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
+_problem_of(k, f, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::EnteredCallbacks) =
     _problem(_core_function(k, p, u, nothing), _plain_function(k, p), core_no_jacobian, u, ts, p,
              _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
 # SciML's record (a `Callable` by its declaration), boxed or wrapped as a whole: its functions in the forms the record holds
 # them (open issue 159: `ODEFunction(f; jac = compiled_for(j))` keeps `j` compiled); its properties are the record's
-_problem_of(k, f::ODEFunction, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::Vector{Any}) =
+_problem_of(k, f::ODEFunction, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::EnteredCallbacks) =
     _problem(_core_function(f.f, p, u, f.jac), _plain_function(f.f, p, f.jac), _core_jacobian(f.jac, p, u), u, ts, p,
              f.sys, f.mass_matrix, f.jac_prototype, cbs)
 _span(tspan) = (Float64(tspan[1]), Float64(tspan[2]))
-"The callbacks given to a problem, as a vector."
-_callbacks(::Nothing) = Any[]
-_callbacks(cbs::Union{Tuple,AbstractVector}) = Any[c for c in cbs]
-_callbacks(@nospecialize(cb)) = Any[cb]
 
 # The core's trait for the right-hand side at a state type: with the Jacobian by duals (a `Float64` state, no
 # Jacobian given) the one function is seen at the duals too, so a box is made at both signatures (traits §7.7, §9)
@@ -115,7 +113,7 @@ _core_jacobian(@nospecialize(jac), p, u::Vector{T}) where {T} = Dynamic{Callable
 # the problem, from its functions as it keeps them. The type's parameters are written out (traits §8.2): the
 # constructor that infers them takes its functions at `Callable`'s default
 _problem(r, fplain::UserFunction, jk, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P,
-         @nospecialize(sys), mm, @nospecialize(jp), cbs::Vector{Any}) where {T,P} =
+         @nospecialize(sys), mm, @nospecialize(jp), cbs::EnteredCallbacks{Vector{T},Float64,P}) where {T,P} =
     ODEProblem{T,P,typeof(r),typeof(jk)}(r, u0, tspan, p, jk, _by_duals(u0, jk), fplain, sys,
                                          _names(sys)::Union{Nothing,Dynamic{IndexProvider{Symbol}}}, mm, _is_identity(mm)::Bool, jp, cbs)
 
@@ -137,8 +135,8 @@ types, partially evaluated on the new parameters; the system object, the mass ma
 `ODEProblem`.
 """
 function remake(prob::ODEProblem; u0 = prob.u0, tspan = prob.tspan, p = prob.p, callback = missing)
-    cbs = callback === missing ? copy(prob.callbacks) : _callbacks(callback)
     u = _promote_state(_state(u0), p)
+    cbs = enter_callbacks(callback === missing ? prob.callbacks : callback, typeof(u), typeof(p))
     k = getfield(prob, :f); kj = getfield(prob, :jac)     # the fields as stored, not as a bound views them
     jac = _user_jacobian(kj)
     return _problem(_again(k, p, u, jac), _plain_again(k, p, jac), _core_jacobian(jac, p, u), u, _span(tspan), p,
