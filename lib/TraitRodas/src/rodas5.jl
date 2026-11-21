@@ -2,7 +2,7 @@
     Rodas5(; chunk_size = nothing, linsolve = DenseLU())
 
 Rodas5 with the problem's `jacobian!` (`chunk_size = nothing`: TDE's `ODEProblem` by duals in chunks
-of `DUAL_CHUNK`), or with the problem's plain function (`rhs_function`) entered at `init` at the duals
+of `DUAL_CHUNK`), or with the problem's function (its box's function, boxed again; a wrapper as it is) entered at `init` at the duals
 of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`). Its linear
 systems are solved by `linsolve`, any `LinearSolver` (stage C): kept as the user's object, so the solver is
 compiled per linear solver, or the box `Dynamic{LinearSolver}(ls)`, compiled once for every linear solver.
@@ -77,9 +77,15 @@ function dual_jacobian!(jc::DualJacobian{N}, J::Matrix{Float64}, u::Vector{Float
     end
     return nothing
 end
-"Enter the plain function `f` at the duals of chunk `N` (`f` as given: a box or a wrapper keeps its form)."
-Base.@nospecializeinfer dual_jacobian(@nospecialize(f), n::Int, ::Val{N}) where {N} =
-    DualJacobian(f, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
+"""
+Enter the core's function `k` at the duals of chunk `N`, in its form: a box's function boxed again at the duals'
+signature (a box is called at its own signatures only, traits reference §7.7); a wrapper as it is, called as the
+function is (§7.6). Never at `Any`: the function is known by its signature, so a closed build lists what it can be.
+"""
+dual_jacobian(k::Dynamic, n::Int, ::Val{N}) where {N} =
+    _dual_jacobian(Dynamic{Callable{CoreDualSig{N},Nothing}}(unwrap(k)), n, Val(N))
+dual_jacobian(k::Compiled, n::Int, ::Val{N}) where {N} = _dual_jacobian(k, n, Val(N))
+_dual_jacobian(fd, n::Int, ::Val{N}) where {N} = DualJacobian(fd, Vector{FDual{N}}(undef, n), Vector{FDual{N}}(undef, n))
 
 """
     Rodas5Steps
@@ -253,8 +259,8 @@ rodas5_init(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
 """
-Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and a plain function from
-the problem (`m.fplain`), the function is entered at the duals of chunk `N` here
+Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and the problem's function by
+duals (`m.ad`), the function is entered at the duals of chunk `N` here
 (`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
 """
 function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
@@ -263,10 +269,8 @@ function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,F
     m isa CoreProblem && m.ad || return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     n = length(u0)
     N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
-    # the problem's plain function, seen at the duals of chunk `N`: the kept `m.f` is a `Dynamic` at the
-    # problem's own signatures only, and a compiled one (no plain function beside it) is the function itself
-    fp = m.fplain.f
-    jc = dual_jacobian(fp === nothing ? m.f : fp, n, Val(N))
+    # the problem's function, seen at the duals of chunk `N`: a box's function boxed again there, a wrapper as it is
+    jc = dual_jacobian(m.f, n, Val(N))
     return rodas5_start(m, u0, tspan, callbacks, opts, jc, alg.linsolve)
 end
 "Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step; a barrier per chunk."

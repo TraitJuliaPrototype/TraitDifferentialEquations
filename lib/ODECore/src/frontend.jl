@@ -73,17 +73,14 @@ end
 # without parameters: the kept form passed on
 ODEProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}, tspan; callback = nothing) where {T} =
     ODEProblem(f, u0, tspan, nothing; callback)
-"The object a kept form holds, or the value itself."
-_object(@nospecialize(f)) = f
-_object(f::Union{Dynamic,Compiled}) = unwrap(f)
 # a function or a model in the form `k` it was given (a box, a wrapper): its properties are the object's own
 _problem_of(k, f, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::EnteredCallbacks) =
-    _problem(_core_function(k, p, u, nothing), _plain_function(k, p), core_no_jacobian, u, ts, p,
+    _problem(_core_function(k, p, u, nothing), core_no_jacobian, u, ts, p,
              _system(f), _mass_matrix(f), _jac_prototype(f), cbs)
 # SciML's record (a `Callable` by its declaration), boxed or wrapped as a whole: its functions in the forms the record holds
 # them (open issue 159: `ODEFunction(f; jac = compiled_for(j))` keeps `j` compiled); its properties are the record's
 _problem_of(k, f::ODEFunction, u::Vector, ts::Tuple{Float64,Float64}, p, cbs::EnteredCallbacks) =
-    _problem(_core_function(f.f, p, u, f.jac), _plain_function(f.f, p, f.jac), _core_jacobian(f.jac, p, u), u, ts, p,
+    _problem(_core_function(f.f, p, u, f.jac), _core_jacobian(f.jac, p, u), u, ts, p,
              f.sys, f.mass_matrix, f.jac_prototype, cbs)
 _span(tspan) = (Float64(tspan[1]), Float64(tspan[2]))
 
@@ -94,27 +91,23 @@ _core_trait(::Vector{T}, jac) where {T} = Callable{CoreRHSSig{T},Nothing}
 _by_duals(::Vector{Float64}, ::CoreNoJacobian) = true
 _by_duals(::Vector, jk) = false
 # The function partially evaluated on the parameters (W-63) at the problem's bound, which has no parameter for the
-# parameters' type, in the form it was given: a box is boxed again at the core's trait, one type for every function;
-# a wrapper wraps the partially evaluated function, so the solver is compiled for it; a plain function (a record's)
-# is boxed
+# parameters' type, in the form it was given: a wrapper wraps the partially evaluated function, so the solver is
+# compiled for it; a box's function is boxed again at the core's trait, one type for every function; a plain
+# function (a record's) is boxed. The function is read from its kept form, `unwrap(k)`, known by its signature
+# (traits reference §7.4, §9): never at `Any`, so a closed build lists the functions it can be (§16)
 _core_function(k::Compiled, p, u::Vector, jac) = Compiled(PartialFn(unwrap(k), p))
-_core_function(@nospecialize(f), p, u::Vector, jac) = _erased_function(_object(f), p, u, jac)
-_erased_function(@nospecialize(f), p, u::Vector, jac) = Dynamic{_core_trait(u, jac)}(PartialFn(f, p))
-# for a solver that picks its own dual chunk, the function as a plain value; `nothing` where the function is
-# compiled or a Jacobian is given
-_plain_function(k::Compiled, p) = UserFunction(nothing)
-_plain_function(@nospecialize(f), p) = UserFunction(PartialFn(_object(f), p))
-_plain_function(@nospecialize(f), p, ::Nothing) = _plain_function(f, p)
-_plain_function(@nospecialize(f), p, jac) = UserFunction(nothing)
+_core_function(k::Dynamic, p, u::Vector, jac) = Dynamic{_core_trait(u, jac)}(PartialFn(unwrap(k), p))
+_core_function(f, p, u::Vector, jac) = Dynamic{_core_trait(u, jac)}(PartialFn(f, p))
 # a given Jacobian at the core's signature, in its form; without one, the library's `core_no_jacobian`
 _core_jacobian(::Nothing, p, u::Vector) = core_no_jacobian
 _core_jacobian(jac::Compiled, p, u::Vector) = Compiled(PartialFn(unwrap(jac), p))
-_core_jacobian(@nospecialize(jac), p, u::Vector{T}) where {T} = Dynamic{Callable{CoreJacSig{T},Nothing}}(PartialFn(_object(jac), p))
+_core_jacobian(jac::Dynamic, p, u::Vector{T}) where {T} = Dynamic{Callable{CoreJacSig{T},Nothing}}(PartialFn(unwrap(jac), p))
+_core_jacobian(jac, p, u::Vector{T}) where {T} = Dynamic{Callable{CoreJacSig{T},Nothing}}(PartialFn(jac, p))
 # the problem, from its functions as it keeps them. The type's parameters are written out (traits §8.2): the
 # constructor that infers them takes its functions at `Callable`'s default
-_problem(r, fplain::UserFunction, jk, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P,
+_problem(r, jk, u0::Vector{T}, tspan::Tuple{Float64,Float64}, p::P,
          @nospecialize(sys), mm, @nospecialize(jp), cbs::EnteredCallbacks{Vector{T},Float64,P}) where {T,P} =
-    ODEProblem{T,P,typeof(r),typeof(jk)}(r, u0, tspan, p, jk, _by_duals(u0, jk), fplain, sys,
+    ODEProblem{T,P,typeof(r),typeof(jk)}(r, u0, tspan, p, jk, _by_duals(u0, jk), sys,
                                          _names(sys)::Union{Nothing,Dynamic{IndexProvider{Symbol}}}, mm, _is_identity(mm)::Bool, jp, cbs)
 
 _state(u0::AbstractVector{<:ForwardDiff.Dual}) = Vector(u0)
@@ -139,14 +132,12 @@ function remake(prob::ODEProblem; u0 = prob.u0, tspan = prob.tspan, p = prob.p, 
     cbs = enter_callbacks(callback === missing ? prob.callbacks : callback, typeof(u), typeof(p))
     k = getfield(prob, :f); kj = getfield(prob, :jac)     # the fields as stored, not as a bound views them
     jac = _user_jacobian(kj)
-    return _problem(_again(k, p, u, jac), _plain_again(k, p, jac), _core_jacobian(jac, p, u), u, _span(tspan), p,
+    return _problem(_again(k, p, u, jac), _core_jacobian(jac, p, u), u, _span(tspan), p,
                     prob.sys, prob.mass_matrix, prob.jac_prototype, cbs)
 end
 # the user's functions back from their partially evaluated forms, entered again in their forms
-_again(k::Dynamic, p, u::Vector, jac) = _erased_function(unwrap(k).f, p, u, jac)
+_again(k::Dynamic, p, u::Vector, jac) = _core_function(unwrap(k).f, p, u, jac)
 _again(k::Compiled, p, u::Vector, jac) = Compiled(PartialFn(unwrap(k).f, p))
-_plain_again(k::Dynamic, p, jac) = _plain_function(unwrap(k).f, p, jac)
-_plain_again(k::Compiled, p, jac) = UserFunction(nothing)
 _user_jacobian(::CoreNoJacobian) = nothing
 _user_jacobian(kj::Dynamic) = unwrap(kj).f
 _user_jacobian(kj::Compiled) = Compiled(unwrap(kj).f)

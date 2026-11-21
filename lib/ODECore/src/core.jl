@@ -29,7 +29,7 @@ import LinearAlgebra
 import ForwardDiff
 export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, condition, affect!, IntegratorView, Tsit5, ODESolution, CoreSolution, SolverOptions,
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
-       no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
+       no_jacobian, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, EnteredCallbacks, enter_callbacks, enter_callbacks!,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
        NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, StepCallbacks,
@@ -416,12 +416,6 @@ end
 core_no_jacobian(J, u, t) = nothing
 const CoreNoJacobian = typeof(core_no_jacobian)
 
-"The user's function as given, its type hidden: what a problem keeps beside the kept forms."
-struct UserFunction
-    f::Any
-    UserFunction(@nospecialize(f)) = new(f)
-end
-
 """
     ODEProblem{T, P, F, D, J}
 
@@ -439,9 +433,8 @@ whatever the function and the parameters:
   at the library's duals where the Jacobian needs it (traits reference §5.8, §6.5);
 - `jac::J` at `CoreJacSig{T}`, the given Jacobian; without one, the library's `core_no_jacobian`,
   kept compiled, so `jacobian!` folds on `J`.
-- `fplain`, the partially evaluated function as a plain value, beside the kept ones (`rhs_function`):
-  a solver that picks its own dual chunk enters it at its `init` (Rodas5's `chunk_size`). Held in a
-  `UserFunction`, so that no constructor is specialized on the function's type.
+A solver that picks its own dual chunk sees the function at its duals by boxing the box's function again
+at that signature (`rhs_function`; traits reference §7.7).
 `p` is what callbacks see as `integ.p`, the same object the kept functions hold. The optional properties
 its function carried (open issue 119), each read at the front end and kept as given: the system object
 (`HasSystem`) with its names where it provides them, the mass matrix (`HasMassMatrix`), the Jacobian
@@ -455,7 +448,6 @@ struct ODEProblem{T,P,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{
     p::P
     jac::J
     ad::Bool
-    fplain::UserFunction
     sys::Any                                       # the system object, or nothing
     names::Union{Nothing,Dynamic{IndexProvider{Symbol}}}   # its names (move 4), where it provides them
     mass_matrix::Any                               # the identity, or the function's
@@ -471,8 +463,11 @@ rhs!(prob::ODEProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (
 @unbounded jacobian!(prob::ODEProblem{T,P,F,J}, Jm::Matrix{T}, u::Vector{T}, t::Float64) where {T,P,F,J} =
     J === CoreNoJacobian ? (prob.ad ? _ad_jacobian!(prob.f, Jm, u, t, Val(DUAL_CHUNK)) : fd_jacobian!(prob, Jm, u, t)) :
     (prob.jac(Jm, u, t)::Nothing; nothing)
-"The user's function partially evaluated, for a solver that picks its own dual chunk; `nothing` when a Jacobian was given."
-rhs_function(prob::ODEProblem) = prob.fplain.f
+"""
+The user's function partially evaluated, for a solver that picks its own dual chunk: the function the box holds
+(`unwrap`, traits reference §7.4); `nothing` where the function is compiled or a Jacobian was given.
+"""
+rhs_function(prob::ODEProblem{T,P,F,J}) where {T,P,F,J} = F <: Dynamic && J === CoreNoJacobian ? unwrap(prob.f) : nothing
 """
 The Jacobian by duals: one call of the right-hand side, seen at the library's duals of chunk `N`, per chunk of `N`
 columns. Its declared result reaches the callers compiled by facts, where the entry sees a function kept at
@@ -529,7 +524,6 @@ struct CoreProblem{T,F<:Callable{CoreRHSSig{T},Nothing},J<:Callable{CoreJacSig{T
     tspan::Tuple{Float64,Float64}
     jac::J
     ad::Bool
-    fplain::UserFunction       # the problem's plain function, for a solver that picks its own dual chunk, or nothing
 end
 core_rhs!(m::CoreProblem{T}, du::Vector{T}, u::Vector{T}, t::Float64) where {T} = (m.f(du, u, t)::Nothing; nothing)
 "The core's Jacobian: the given one; else by the duals for a `Float64` state; else by finite differences."
@@ -551,7 +545,7 @@ The outer layer's step (W-63): the problem's functions partially evaluated on it
 function core_problem(prob::ODEProblem{T,P,F,J}) where {T,P,F,J}
     # a compiled function: the problem type is a member of the problem family, checked at its first use (traits §4.7)
     F <: Dynamic || _member_checked(prob)
-    return CoreProblem{T,F,J}(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad, prob.fplain)
+    return CoreProblem{T,F,J}(prob.f, prob.u0, prob.tspan, prob.jac, prob.ad)
 end
 "Nothing: the bound's first-use check of the problem type, as a member of the problem family."
 _member_checked(prob::ODEProblemTrait) = nothing
@@ -561,7 +555,7 @@ _member_checked(prob::ODEProblemTrait) = nothing
 @unbounded core_problem(prob::ODEProblemTrait{T,P}) where {T,P} =
     CoreProblem{T,Dynamic{Callable{CoreRHSSig{T},Nothing}},Dynamic{Callable{CoreJacSig{T},Nothing}}}(
         Dynamic{Callable{CoreRHSSig{T},Nothing}}(ProblemRHS(prob)), prob.u0, prob.tspan,
-        Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false, UserFunction(nothing))
+        Dynamic{Callable{CoreJacSig{T},Nothing}}(ProblemJac(prob)), false)
 
 """
     DiscreteCallback(condition, affect!; initialize = no_initialize)
