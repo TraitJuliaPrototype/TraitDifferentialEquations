@@ -3,6 +3,8 @@
 
 "The signature of a residual partially evaluated on the parameters, `f(r, u)`, at element type `T`."
 const NLSig{T} = Tuple{Vector{T},Vector{T}}
+"The signature of a residual `f(r, u, p)` in the form the user writes it."
+const NLRHSSig{P,T} = Tuple{Vector{T},Vector{T},P}
 "The signature of its Jacobian `jac(J, u)`."
 const NLJacSig{T} = Tuple{Matrix{T},Vector{T}}
 "The residual at the library's duals of chunk `N`."
@@ -115,10 +117,23 @@ nl_no_jacobian(J, u) = nothing
 const NL_NO_JACOBIAN = Compiled(nl_no_jacobian)
 const NLNoJacobian = typeof(NL_NO_JACOBIAN)
 
-# a user's function partially evaluated, as a plain record (a kept function: its object); `_nlproblem` keeps it at
-# `Callable`'s default, `Dynamic` (open issue 159)
-Base.@nospecializeinfer _nlpartial(@nospecialize(f), p) = NLPartial(f isa Dynamic ? unwrap(f) : f, p)
-Base.@nospecializeinfer _attime(@nospecialize(f), p, t::Float64) = AtTime(f isa Dynamic ? unwrap(f) : f, p, t)
+# A user's function partially evaluated on what the problem fixes (`C(f, args...)`: `NLPartial(f, p)`, or `AtTime(f, p, t)`),
+# in the form it was given, as the ODE core does (`_core_function`): a box's function is boxed again at the solvers'
+# signatures, one type for every function; a wrapper wraps the partially evaluated function, so the solver is compiled for
+# it; a plain function (a record's) is boxed. The function is read from its kept form, `unwrap(k)`, known by its
+# signature (traits reference §7.4, §9): never at `Any`, so a closed build lists the functions it can be (§16).
+# With the Jacobian by duals (a `Float64` state, none given) the residual is also seen at the duals (§7.7, §9).
+_nl_trait(::Vector{Float64}, ::Nothing) = All{Callable{NLSig{Float64},Nothing}, Callable{NLDualSig{DUAL_CHUNK},Nothing}}
+_nl_trait(::Vector{T}, jac) where {T} = Callable{NLSig{T},Nothing}
+_nl_function(::Type{C}, args::Tuple, k::Compiled, jac, u::Vector) where {C} = Compiled(C(unwrap(k), args...))
+_nl_function(::Type{C}, args::Tuple, k::Dynamic, jac, u::Vector) where {C} = Dynamic{_nl_trait(u, jac)}(C(unwrap(k), args...))
+_nl_function(::Type{C}, args::Tuple, f, jac, u::Vector) where {C} = Dynamic{_nl_trait(u, jac)}(C(f, args...))
+# a given Jacobian at the solvers' signature, in its form; without one, the library's `NL_NO_JACOBIAN`
+_nl_jacobian(::Type{C}, args::Tuple, ::Nothing, u::Vector) where {C} = NL_NO_JACOBIAN
+_nl_jacobian(::Type{C}, args::Tuple, jac::Compiled, u::Vector) where {C} = Compiled(C(unwrap(jac), args...))
+_nl_jacobian(::Type{C}, args::Tuple, jac::Dynamic, u::Vector{T}) where {C,T} =
+    Dynamic{Callable{NLJacSig{T},Nothing}}(C(unwrap(jac), args...))
+_nl_jacobian(::Type{C}, args::Tuple, jac, u::Vector{T}) where {C,T} = Dynamic{Callable{NLJacSig{T},Nothing}}(C(jac, args...))
 
 """
     NonlinearProblem{T, P, F, J}
@@ -184,12 +199,23 @@ enters at `(Vector{T}, Vector{T}) -> Nothing`, partially evaluated on the parame
 for the Jacobian; a Jacobian given in a `NonlinearFunction` at `(Matrix{T}, Vector{T}) -> Nothing`. The function's
 optional properties (`HasSystem`, `HasJacobianPrototype`) are read here and kept.
 """
-Base.@nospecializeinfer function NonlinearProblem(@nospecialize(f), u0::AbstractVector, p = nothing)
+# The front end is typed, as the ODE core's: the function is a trait argument of the constructor (traits §8.2), `Callable`
+# at `(Vector{T}, Vector{T}, P) -> Nothing`, whose default boxes a plain function; the problem keeps it in the form it was given.
+# Unbounded on purpose (§7.3): an adapter, it stores the function in the form it is given
+@unbounded function NonlinearProblem(f::Callable{NLRHSSig{P,T},Nothing}, u0::AbstractVector{T}, p::P) where {T,P}
     u = ODECore._state(u0)
-    f isa NonlinearFunction && return _nlproblem(_nlpartial(f.f, p), f.jac === nothing ? nothing : _nlpartial(f.jac, p),
-                                                 u, p, f.sys, f.jac_prototype)
-    return _nlproblem(_nlpartial(f, p), nothing, u, p, ODECore._system(f), ODECore._jac_prototype(f))
+    return _nlproblem_of(NLPartial, (p,), f, unwrap(f), u)
 end
+# without parameters: the kept form passed on
+NonlinearProblem(f::Callable{NLRHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}) where {T} = NonlinearProblem(f, u0, nothing)
+# a function or a model in the form `k` it was given: its properties are the object's own
+_nlproblem_of(C, args::Tuple, k, f, u::Vector) =
+    _nlproblem(_nl_function(C, args, k, nothing, u), NL_NO_JACOBIAN, u, first(args), ODECore._system(f), ODECore._jac_prototype(f))
+# SciML's records (a `Callable` by their declaration), as a whole: their functions in the forms the record holds them
+_nlproblem_of(C, args::Tuple, k, f::NonlinearFunction, u::Vector) =
+    _nlproblem(_nl_function(C, args, f.f, f.jac, u), _nl_jacobian(C, args, f.jac, u), u, first(args), f.sys, f.jac_prototype)
+_nlproblem_of(C, args::Tuple, k, f::ODEFunction, u::Vector) =
+    _nlproblem(_nl_function(C, args, f.f, f.jac, u), _nl_jacobian(C, args, f.jac, u), u, first(args), f.sys, f.jac_prototype)
 
 """
     SteadyStateProblem(f, u0, p = nothing; t = Inf)
@@ -201,26 +227,22 @@ a `NonlinearProblem` (SteadyStateDiffEq's `SSRootfind`: any `NonlinearAlgorithm`
 an `ODEFunction` is taken at `t`; the function's properties as `NonlinearProblem` reads them. From a problem of any
 type that implements `ODEProblemTrait`: its `rhs!` and `jacobian!` at `t`, its guess and parameters.
 """
-Base.@nospecializeinfer function SteadyStateProblem(@nospecialize(f), u0::AbstractVector, p = nothing; t::Real = Inf)
+@unbounded function SteadyStateProblem(f::Callable{RHSSig{P,T},Nothing}, u0::AbstractVector{T}, p::P; t::Real = Inf) where {T,P}
     u = ODECore._state(u0)
-    tt = Float64(t)
-    f isa ODEFunction && return _nlproblem(_attime(f.f, p, tt), f.jac === nothing ? nothing : _attime(f.jac, p, tt),
-                                           u, p, f.sys, f.jac_prototype)
-    return _nlproblem(_attime(f, p, tt), nothing, u, p, ODECore._system(f), ODECore._jac_prototype(f))
+    return _nlproblem_of(AtTime, (p, Float64(t)), f, unwrap(f), u)
 end
+SteadyStateProblem(f::Callable{RHSSig{Nothing,T},Nothing}, u0::AbstractVector{T}; t::Real = Inf) where {T} =
+    SteadyStateProblem(f, u0, nothing; t)
 # the problem's properties read before it enters the bound (a trait object is passed on only where its trait is expected)
 Base.@nospecializeinfer SteadyStateProblem(@nospecialize(prob); t::Real = Inf) =
     _steady(prob, Float64(t), ODECore._system(prob), ODECore._jac_prototype(prob))
 _steady(prob::ODEProblemTrait{T,P}, t::Float64, @nospecialize(sys), @nospecialize(jp)) where {T,P} =
     NonlinearProblem(ProblemAtTime(prob, t), prob.u0, prob.p, ProblemJacAtTime(prob, t), false, sys, jp)
 
-# the plain records kept `Dynamic`: the residual at both signatures where its Jacobian is by duals (traits §7.7, §9)
-function _nlproblem(@nospecialize(r), @nospecialize(jr), u0::Vector{T}, p::P, @nospecialize(sys), @nospecialize(jp)) where {T,P}
-    ad = T === Float64 && jr === nothing
-    X = ad ? All{Callable{NLSig{T},Nothing}, Callable{NLDualSig{DUAL_CHUNK},Nothing}} : Callable{NLSig{T},Nothing}
-    jk = jr === nothing ? NL_NO_JACOBIAN : Dynamic{Callable{NLJacSig{T},Nothing}}(jr)
-    return NonlinearProblem(Dynamic{X}(r), u0, p, jk, ad, sys, jp)
-end
+# the problem from its functions as it keeps them. The type's parameters are written out (traits §8.2): the constructor that
+# infers them takes its functions at `Callable`'s default. The Jacobian is by duals for a `Float64` state with none given
+_nlproblem(r, jk, u0::Vector{T}, p::P, @nospecialize(sys), @nospecialize(jp)) where {T,P} =
+    NonlinearProblem{T,P,typeof(r),typeof(jk)}(r, u0, p, jk, T === Float64 && jk isa NLNoJacobian, sys, jp)
 
 """
     NLCoreProblem{T, F, J}
