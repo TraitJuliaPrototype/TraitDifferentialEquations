@@ -318,7 +318,8 @@ end
 @implement HasSystem NonlinearSolution{T,P} where {T,P} begin
     system(s) = getfield(s, :sys)
 end
-nl_with_problem(s::NLCoreSolution{T}, prob::NonlinearProblemTrait{T,P}, @nospecialize(sys)) where {T,P} =
+# the result is declared: the constructor at `sys::Any` is a run-time site (facts §3), whose result a session does not know
+(nl_with_problem(s::NLCoreSolution{T}, prob::NonlinearProblemTrait{T,P}, @nospecialize(sys))::NonlinearSolution{T,P}) where {T,P} =
     NonlinearSolution{T,P}(s.u, s.resid, s.retcode, s.stats, prob, sys)
 
 """

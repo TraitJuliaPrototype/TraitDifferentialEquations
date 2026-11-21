@@ -940,7 +940,7 @@ Base.getindex(v::ParamView, sym::Symbol) = getparam(v.s, sym)
 Base.getindex(s::ODESolution, sym::Symbol) = getseries(s, sym)
 Base.getproperty(s::ODESolution, name::Symbol) = name === :ps ? ParamView(s) : getfield(s, name)
 "The solver's solution given its problem, its system, names and saved parameters (the outer layer, W-63)."
-with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys, names, pt::Vector{Float64}, pu::Vector{P}) where {T,P} =
+(with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys, names, pt::Vector{Float64}, pu::Vector{P})::ODESolution{T,P}) where {T,P} =
     ODESolution{T,P}(s.t, s.u, s.retcode, s.naccept, s.nreject, s.nf, prob, sys, names, pt, pu, s.interp)
 
 """

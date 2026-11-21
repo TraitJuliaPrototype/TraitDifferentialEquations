@@ -40,9 +40,8 @@ the solution's type, `NonlinearSolution{T, P}`, which names neither the problem'
 compiled once is decided by the problem's function's form: `NonlinearProblem` keeps a plain function boxed, one
 problem type for every function, so a new residual compiles itself only; `compiled_for(f)` compiles the solver for it.
 """
-# the options at their declared types: `Float64(x)` of a keyword the code does not know has no declared result
 solve(prob::NonlinearProblemTrait, alg::NonlinearAlgorithm; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) =
-    solve_nonlinear(prob, alg, NLOptions(Float64(abstol)::Float64, Float64(reltol)::Float64, Int(maxiters)::Int))
+    solve_nonlinear(prob, alg, NLOptions(Float64(abstol), Float64(reltol), Int(maxiters)))
 solve(prob::NonlinearProblemTrait; abstol = NL_TOL, reltol = NL_TOL, maxiters = 1000) =
     solve(prob, NonlinearPolyalg(); abstol, reltol, maxiters)
 # Whether a value is a nonlinear algorithm or problem, by its trait: bounded methods with an untyped fallback after them
