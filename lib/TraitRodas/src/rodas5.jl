@@ -2,16 +2,29 @@
     Rodas5(; chunk_size = nothing, linsolve = DenseLU())
 
 Rodas5 with the problem's `jacobian!` (`chunk_size = nothing`: TDE's `ODEProblem` by duals in chunks
-of `DUAL_CHUNK`), or with the problem's function (its box's function, boxed again; a wrapper as it is) entered at `init` at the duals
-of chunk `chunk_size` (`0`: picked from the state's length, as ForwardDiff's `pickchunksize`). Its linear
-systems are solved by `linsolve`, any `LinearSolver` (stage C): kept as the user's object, so the solver is
-compiled per linear solver, or the box `Dynamic{LinearSolver}(ls)`, compiled once for every linear solver.
+of `DUAL_CHUNK`), or with the problem's function (its box's function, boxed again; a wrapper as it is) entered at
+`init` at the duals of chunk `chunk_size` (an `Int`, or `Val(N)`; `0`: picked from the state's length when the solve
+runs, as ForwardDiff's `pickchunksize`). The chunk is a parameter of the algorithm's type, `Rodas5{L, CS}`, as
+upstream's `Rodas5{CS, …}` keeps it: the code it chooses is chosen where the algorithm is made, so a program that
+fixes it is fully typed (traits reference §14); with `0`, the chunk is a run-time value and the driver is reached
+through one dispatch. Its linear systems are solved by `linsolve`, any `LinearSolver` (stage C): kept as the
+user's object, so the solver is compiled per linear solver, or the box `Dynamic{LinearSolver}(ls)`, compiled once
+for every linear solver.
 """
-struct Rodas5{L <: LinearSolver}
-    chunk_size::Union{Nothing,Int}
+struct Rodas5{L <: LinearSolver, CS}
     linsolve::L
+    function Rodas5{L,CS}(linsolve::L) where {L <: LinearSolver, CS}
+        CS === nothing || CS isa Int && CS >= 0 || throw(ArgumentError("Rodas5: chunk_size is nothing, 0 or a positive Int"))
+        return new{L,CS}(linsolve)
+    end
 end
+Rodas5(chunk_size, linsolve::LinearSolver) = Rodas5{typeof(linsolve),_chunk(chunk_size)}(linsolve)
 Rodas5(; chunk_size = nothing, linsolve = DenseLU()) = Rodas5(chunk_size, linsolve)
+_chunk(::Nothing) = nothing
+_chunk(n::Integer) = Int(n)
+_chunk(::Val{N}) where {N} = _chunk(N)
+"The algorithm's dual chunk: `nothing`, `0` (picked when the solve runs) or `N`, its type's parameter."
+chunk_size(::Rodas5{L,CS}) where {L,CS} = CS
 
 # --- Rodas5 (tableau from OrdinaryDiffEqRosenbrockTableaus 2.0.0; Di Marzo 1993) --------------------
 
@@ -247,10 +260,10 @@ end
 # differences), or with the core's plain function entered at `init` at duals of a chunk picked per
 # problem (`Rodas5(chunk_size = 0)`), dense LU, and a PI step-size controller. `Float64` states only.
 # Discrete and continuous callbacks; the driver is the integrator's `advance!`, so `init` steps it too.
-@implement ODEAlgorithm Rodas5{L} where {L} begin
+@implement ODEAlgorithm Rodas5{L,CS} where {L,CS} begin
     solve_core(a, m, callbacks, opts) = rodas5_solve(m, a, m.u0, m.tspan, callbacks, opts)
 end
-@implement ODEStepper Rodas5{L} where {L} begin
+@implement ODEStepper Rodas5{L,CS} where {L,CS} begin
     init_core(a, m, callbacks, opts) = rodas5_init(m, a, m.u0, m.tspan, callbacks, opts)
 end
 rodas5_solve(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
@@ -259,21 +272,28 @@ rodas5_init(m, alg::Rodas5, u0::Vector{T}, tspan, callbacks, opts) where {T} =
     throw(ArgumentError("Rodas5 takes Float64 states; this problem's state has $T"))
 
 """
-Rodas5's `init` for the core's problem `m`: with `alg.chunk_size` an `Int` and the problem's function by
-duals (`m.ad`), the function is entered at the duals of chunk `N` here
-(`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
+Rodas5's `init` for the core's problem `m`: with a chunk `CS` and the problem's function by duals (`m.ad`), the
+function is entered at the duals of chunk `CS` here (`DualJacobian`), and the driver is compiled per chunk;
+otherwise the core's Jacobian. The chunk is the algorithm type's, so the choice folds where the code is compiled.
 """
 function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
                      callbacks::StepCallbacks, opts::SolverOptions)
-    alg.chunk_size === nothing && return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
+    CS = chunk_size(alg)
+    CS === nothing && return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     m isa CoreProblem && m.ad || return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
-    n = length(u0)
-    N = alg.chunk_size == 0 ? ForwardDiff.pickchunksize(n) : alg.chunk_size
-    # the problem's function, seen at the duals of chunk `N`: a box's function boxed again there, a wrapper as it is
-    jc = dual_jacobian(m.f, n, Val(N))
-    return rodas5_start(m, u0, tspan, callbacks, opts, jc, alg.linsolve)
+    CS == 0 && return _rodas5_picked(m, alg, u0, tspan, callbacks, opts)
+    # the problem's function, seen at the duals of chunk `CS`: a box's function boxed again there, a wrapper as it is
+    return rodas5_start(m, u0, tspan, callbacks, opts, dual_jacobian(m.f, length(u0), Val(CS)), alg.linsolve)
 end
-"Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step; a barrier per chunk."
+# `chunk_size = 0`: the chunk picked from the state's length when the solve runs, a type chosen by a run-time
+# value; the driver is reached through one dispatch, a function barrier. A closed build cannot list the chunks it
+# may take: a program built ahead fixes the chunk (`chunk_size = N`)
+function _rodas5_picked(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
+                        callbacks::StepCallbacks, opts::SolverOptions)
+    n = length(u0)
+    return rodas5_start(m, u0, tspan, callbacks, opts, dual_jacobian(m.f, n, Val(ForwardDiff.pickchunksize(n))), alg.linsolve)
+end
+"Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step (a barrier where the chunk is picked when it runs)."
 rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, callbacks::StepCallbacks, opts::SolverOptions) =
     _rodas5_run(rodas5_init(m, alg, u0, tspan, callbacks, opts))::CoreSolution{Float64}
 _rodas5_run(i::Rodas5Integrator) = run_to_end!(i)
