@@ -258,7 +258,7 @@ the problem (`m.fplain`), the function is entered at the duals of chunk `N` here
 (`DualJacobian`), and the driver is compiled per `N`; otherwise the core's Jacobian.
 """
 function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-                     callbacks::Vector{Any}, opts::SolverOptions)
+                     callbacks::StepCallbacks, opts::SolverOptions)
     alg.chunk_size === nothing && return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     m isa CoreProblem && m.ad || return rodas5_start(m, u0, tspan, callbacks, opts, nothing, alg.linsolve)
     n = length(u0)
@@ -270,7 +270,7 @@ function rodas5_init(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,F
     return rodas5_start(m, u0, tspan, callbacks, opts, jc, alg.linsolve)
 end
 "Rodas5 to the end of the span: its `init`, then `advance!` until it cannot step; a barrier per chunk."
-rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any}, opts::SolverOptions) =
+rodas5_solve(m, alg::Rodas5, u0::Vector{Float64}, tspan::Tuple{Float64,Float64}, callbacks::StepCallbacks, opts::SolverOptions) =
     _rodas5_run(rodas5_init(m, alg, u0, tspan, callbacks, opts))::CoreSolution{Float64}
 _rodas5_run(i::Rodas5Integrator) = run_to_end!(i)
 
@@ -280,11 +280,11 @@ kept, the times to stop at, the callbacks' `initialize`, the first step's size f
 the first save and the continuous callbacks' conditions at the start.
 """
 function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
-                      callbacks::Vector{Any}, opts::SolverOptions, jc, ls)
+                      callbacks::StepCallbacks, opts::SolverOptions, jc, ls)
     t0, tf = tspan
     n = length(u0)
     z() = zeros(Float64, n)
-    d, c = enter_step_callbacks(callbacks, Vector{Float64})
+    d, c = callbacks.discrete, callbacks.continuous
     i = Rodas5Integrator{typeof(jc),typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, ls,

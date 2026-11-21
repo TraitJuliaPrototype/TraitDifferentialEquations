@@ -32,7 +32,8 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        no_jacobian, UserFunction, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, enter_callbacks,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
-       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, ParamIntegrator,
+       NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, StepCallbacks,
+       enter_step_callback!, ParamIntegrator,
        ODEFunction, HasMassMatrix, mass_matrix, HasJacobianPrototype, jac_prototype, HasSystem, system, getsystem,
        HasCallbacks, problem_callbacks, takes_mass_matrix, auto_dt_reset!, save_discretes!, parameters_at,
        initialize!, event_initialize!, event_affect_neg!, no_initialize,
@@ -176,6 +177,25 @@ end
     step_event_affect_neg!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing = step_event_affect!(cb, sv)
     step_event_initialize!(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing = nothing
 end
+
+"""
+    StepCallbacks{U, T}
+
+The callbacks of a solve as the solver core takes them: the discrete ones in a `Vector{StepCallback{U, T}}`, the
+continuous ones in a `Vector{StepEvent{U, T}}`. Storage typed by the traits (traits reference §8.1): each callback
+is kept in the form it was given, and code over the record is fully typed (§14). `enter_step_callback!` adds a
+callback by its trait; a value of both traits is a continuous one.
+"""
+struct StepCallbacks{U,T}
+    discrete::Vector{StepCallback{U,T}}
+    continuous::Vector{StepEvent{U,T}}
+end
+StepCallbacks{U,T}() where {U,T} = StepCallbacks{U,T}(StepCallback{U,T}[], StepEvent{U,T}[])
+Base.isempty(cs::StepCallbacks) = isempty(cs.discrete) && isempty(cs.continuous)
+"Add a value of `StepCallback{U, T}` or `StepEvent{U, T}` to the core's callbacks, by its trait (traits reference §5.5)."
+enter_step_callback!(cs::StepCallbacks{U,T}, cb::StepEvent{U,T}) where {U,T} = (push!(cs.continuous, cb); cs)
+enter_step_callback!(cs::StepCallbacks{U,T}, cb::StepCallback{U,T}) where {U,T} = (push!(cs.discrete, cb); cs)
+enter_step_callback!(cs::StepCallbacks{U,T}, cb::All{StepEvent{U,T}, StepCallback{U,T}}) where {U,T} = (push!(cs.continuous, cb); cs)
 
 """
     Interpolant{U, T}
@@ -730,8 +750,8 @@ function param_integrator(::Type{U}, p::P, t0::Float64, sys, names, save::Bool) 
 end
 
 """
-    adapt_callbacks(cbs, U, p) -> Vector{Any}
-    adapt_callbacks!(pi, cbs) -> Vector{Any}
+    adapt_callbacks(cbs, U, p) -> StepCallbacks{U, Float64}
+    adapt_callbacks!(pi, cbs) -> StepCallbacks{U, Float64}
 
 The outer layer's step for callbacks (W-63): the user's callbacks entered at the problem's types
 `(U, Float64, P)` (`enter_callbacks`), each adapted to the solver core, which sees them as
@@ -742,32 +762,11 @@ adapt_callbacks(cbs::Vector{Any}, ::Type{U}, p::P) where {U,P} =
 function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::Vector{Any}) where {U,T,P}
     d, c = enter_callbacks(cbs, U, P)
     view = Dynamic{IntegratorView{U,T,P}}(pi)
-    out = Any[]
-    for k in d; push!(out, ParamCallback{U,T,P}(k, pi, view)); end
-    for k in c; push!(out, ParamEvent{U,T,P}(k, pi, view)); end
+    out = StepCallbacks{U,T}()
+    for k in d; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)); end
+    for k in c; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)); end
     return out
 end
-
-"""
-The solver core's `init` step for callbacks: values of `StepCallback{U, Float64}` and
-`StepEvent{U, Float64}` (the adapted user's callbacks), kept in two vectors.
-"""
-function enter_step_callbacks(cbs::Vector{Any}, ::Type{U}) where {U}
-    T = Float64
-    d = StepCallback{U,T}[]
-    c = StepEvent{U,T}[]
-    for cb in cbs
-        _enter_step_callback!(d, c, cb)
-    end
-    return d, c
-end
-
-_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepEvent{U,T}) where {U,T} =
-    (push!(c, cb); nothing)
-_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::StepCallback{U,T}) where {U,T} =
-    (push!(d, cb); nothing)
-_enter_step_callback!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, cb::All{StepEvent{U,T}, StepCallback{U,T}}) where {U,T} =
-    (push!(c, cb); nothing)
 
 "The callbacks' `initialize` at a solver's `init`, at the initial state (SciML's `initialize_callbacks!`): the continuous ones, then the discrete ones."
 function initialize_step_callbacks!(d::Vector{StepCallback{U,T}}, c::Vector{StepEvent{U,T}}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T}
@@ -919,12 +918,12 @@ with_problem(s::CoreSolution{T}, prob::ODEProblemTrait{T,P}, sys, names, pt::Vec
 """
 An ODE solver: SciML's algorithms, an open set (move 3). A solver package implements it for its own
 algorithm type. `solve_core(a, m, callbacks, opts)` is the solver's driver on the core's problem `m`
-(its parameters partially evaluated, W-63), with the core's step callbacks. `takes_mass_matrix(a)`: whether
+(its parameters partially evaluated, W-63), with the core's step callbacks (`StepCallbacks`). `takes_mass_matrix(a)`: whether
 it solves `M du/dt = f` for a mass matrix `M` other than the identity (default: no; `solve` and `init`
 refuse such a problem for it).
 """
 @trait ODEAlgorithm begin
-    solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::CoreSolution
+    solve_core(a::ODEAlgorithm, m::CoreProblem, callbacks::StepCallbacks, opts::SolverOptions)::CoreSolution
     takes_mass_matrix(a::ODEAlgorithm)::Bool = false
 end
 
@@ -934,7 +933,7 @@ opts)` returns its integrator at the start of the span, a `CoreIntegrator{U, Flo
 for the state type `U`. A capability of the algorithm's type: `init` takes only these.
 """
 @trait ODEStepper <: ODEAlgorithm begin
-    init_core(a::ODEStepper, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::Any
+    init_core(a::ODEStepper, m::CoreProblem, callbacks::StepCallbacks, opts::SolverOptions)::Any
 end
 
 "Run a solver's integrator to the end of its span (the solvers' `solve_core` by steps)."
@@ -1249,7 +1248,8 @@ function solve_ode(prob, alg::ODEAlgorithm, callbacks::Vector{Any}, opts::Solver
     cbs = _all_callbacks(prob, callbacks)
     sys = _system(prob)
     names = _problem_names(prob, sys)
-    isempty(cbs) && return with_problem(solve_core(alg, m, cbs, opts), prob, sys, names, Float64[], _no_saved(prob.p))
+    isempty(cbs) && return with_problem(solve_core(alg, m, StepCallbacks{typeof(prob.u0),Float64}(), opts), prob, sys, names,
+                                        Float64[], _no_saved(prob.p))
     pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, names, true)
     return with_problem(solve_core(alg, m, adapt_callbacks!(pi, cbs), opts), prob, sys, names, pi.pt, pi.pu)
 end
@@ -1267,7 +1267,7 @@ function init_ode(prob, alg::ODEStepper, callbacks::Vector{Any}, opts::SolverOpt
     cbs = _all_callbacks(prob, callbacks)
     sys = _system(prob)
     pi = param_integrator(typeof(prob.u0), prob.p, prob.tspan[1], sys, _problem_names(prob, sys), true)
-    core = init_core(alg, m, isempty(cbs) ? cbs : adapt_callbacks!(pi, cbs), opts)
+    core = init_core(alg, m, isempty(cbs) ? StepCallbacks{typeof(prob.u0),Float64}() : adapt_callbacks!(pi, cbs), opts)
     return attach!(pi, core, prob)
 end
 "The solver's integrator and the problem, in the outer layer's integrator."
@@ -1320,7 +1320,7 @@ end
 #     solve_core(Tsit5(), m::CoreProblem, callbacks, opts) -> CoreSolution
 #
 # Integrate the core's problem from `m.u0` over `m.tspan` with Tsit5 and a PI step-size controller;
-# `callbacks` are values of `StepCallback` and `StepEvent` (the adapted user's callbacks). The element
+# `callbacks` are the core's (`StepCallbacks`: the adapted user's callbacks, by their traits). The element
 # type `T` is the state's: `Float64`, `Float32`, or a dual number for a gradient through the solve; the
 # step-size control reads primal values, so a gradient follows the primal solve's steps. Callbacks take
 # `Float64` states. The driver is its integrator's `advance!`, one accepted step at a time: `solve` runs it
@@ -1333,17 +1333,17 @@ end
 end
 
 """
-Tsit5's `init`: the integrator at `T` with its problem, the core's callbacks kept (`enter_step_callbacks`), the
+Tsit5's `init`: the integrator at `T` with its problem, the core's callbacks kept (their two vectors), the
 times to stop at, the callbacks' `initialize`, `f(u0, t0)`, the first step's size, the first save and the
 continuous callbacks' conditions at the start. Its type is `Tsit5Integrator{T, M}` whatever the callbacks and the
 parameters.
 """
-function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::Vector{Any},
+function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::StepCallbacks,
                     opts::SolverOptions = DEFAULT_OPTIONS) where {T}
     t0, tf = tspan
     n = length(u0)
     T === Float64 || isempty(callbacks) || throw(ArgumentError("callbacks take Float64 states; this solve has $T"))
-    d, c = enter_step_callbacks(callbacks, Vector{T})
+    d, c = callbacks.discrete, callbacks.continuous
     z() = zeros(T, n)
     i = Tsit5Integrator{T,typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false,
                                      z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,

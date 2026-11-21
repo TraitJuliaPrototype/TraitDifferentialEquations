@@ -8,7 +8,7 @@ its stages solved by any `NonlinearSolver` (Newton by default), which solves its
 module TraitImplicit
 using TraitWorld
 @trait_module
-using ODECore: CoreProblem, CoreSolution, SolverOptions, ODEAlgorithm, NonlinearSolver, NLCache, nlcache, nlstage!, Newton
+using ODECore: CoreProblem, CoreSolution, SolverOptions, ODEAlgorithm, NonlinearSolver, NLCache, nlcache, nlstage!, Newton, StepCallbacks
 import ODECore: solve_core
 export ImplicitEuler
 """
@@ -22,7 +22,7 @@ struct ImplicitEuler{N <: NonlinearSolver}
     nlsolve::N
 end
 ImplicitEuler(; dt = 0.01, nlsolve = Newton()) = ImplicitEuler(dt, nlsolve)
-function ie_solve(a::ImplicitEuler, m::CoreProblem, callbacks::Vector{Any}, opts::SolverOptions)::CoreSolution
+function ie_solve(a::ImplicitEuler, m::CoreProblem, callbacks::StepCallbacks, opts::SolverOptions)::CoreSolution
     isempty(callbacks) || throw(ArgumentError("ImplicitEuler takes no callbacks"))
     u0 = m.u0
     u0 isa Vector{Float64} || throw(ArgumentError("ImplicitEuler takes Float64 states"))

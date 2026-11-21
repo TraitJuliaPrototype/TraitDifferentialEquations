@@ -12,7 +12,7 @@ using ODECore
 # the solver API: the core's problem and its calls, the dual numbers the core keys its problems' functions
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
 using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, StepView, ODEAlgorithm, ODEStepper,
-               CoreIntegrator, core_rhs!, core_jacobian!, enter_step_callbacks, initialize_step_callbacks!, _add_tstop!,
+               CoreIntegrator, core_rhs!, core_jacobian!, StepCallbacks, initialize_step_callbacks!, _add_tstop!,
                step_event_condition, step_condition, step_affect!, locate_events!, event_affect_dir!,
                _save_start!, _retcode, run_to_end!, LinearSolver, linfactor, DenseLU, Interpolant, dense_step,
                _steps, save_step!, save_state!
