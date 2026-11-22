@@ -28,6 +28,7 @@ export ODEFunction, ODEProblem, solve, init, step!, solve!, gradient, Tsit5, Rod
        LinearSolver, linfactor, DenseLU,
        SymbolCache, IndexProvider, ValueProvider, SeriesProvider, variable_index, parameter_index, observed, getu, getstate, getparam, getseries, DiscreteCallback, ContinuousCallback, ODESolution, ODEProblemTrait, rhs!, jacobian!,
        rhs_function, Callback, condition, affect!, IntegratorView, Trajectory, EventCallback, event_condition, event_affect!, event_affect_neg!,
+       VectorContinuousCallback, VectorEventCallback, vector_event_length, vector_event_condition!, vector_event_affect!,
        add_tstop!, terminate!, interp!, auto_dt_reset!, save_discretes!, parameters_at, DiffEqArray, plotpoints,
        HasMassMatrix, HasJacobianPrototype, HasSystem, HasCallbacks, getsystem,
        NonlinearProblemTrait, residual!, nl_jacobian!, NonlinearProblem, NonlinearFunction, SteadyStateProblem,

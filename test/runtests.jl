@@ -121,6 +121,7 @@ include("nonlinear.jl")
 include("r3.jl")
 include("r118.jl")
 include("w96.jl")
+include("w170.jl")
 
 # storage keeps the form it is given (traits §8): a solution holds its solver's steps as the solver made them, a plain
 # member in a field typed by `Interpolant`; a solver's linear solver is kept as given, a box or a wrapper alike

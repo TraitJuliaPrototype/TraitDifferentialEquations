@@ -158,7 +158,7 @@ mutable struct Rodas5Integrator{JC,M,L}
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
     const events::Vector{StepEvent{Vector{Float64},Float64}}
-    const evprev::Vector{Float64}
+    const ev::EventState
     const utilde::Vector{Float64}
     # the driver's state between steps
     iv::Union{Nothing,Dynamic{StepView{Vector{Float64},Float64}}}
@@ -313,7 +313,7 @@ function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
     i = Rodas5Integrator{typeof(jc),typeof(m),typeof(ls)}(m, copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, ls,
-                                    t0, Float64[], d, c, zeros(Float64, length(c)), z(),
+                                    t0, Float64[], d, c, EventState(c), z(),
                                     nothing, opts, tf, 0.0, Float64[], Vector{Float64}[], 1, 0, :Default, false,
                                     opts.dense ? Rodas5Steps() : nothing)
     iv = Dynamic{StepView{Vector{Float64},Float64}}(i)
@@ -325,9 +325,7 @@ function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
     i.u_modified = false
     i.dtnext = rodas5_initdt!(i)
     _save_start!(i.ts, i.us, i.u, t0, opts.saveat) && (i.isave = 2)
-    for k in eachindex(i.events)
-        i.evprev[k] = step_event_condition(i.events[k], i.u, i.t, iv)
-    end
+    events_at!(i.events, i.ev, i.u, i.t, iv)
     return i
 end
 
@@ -351,9 +349,7 @@ function rodas5_advance!(i::Rodas5Integrator)
     iv = i.iv::Dynamic{StepView{Vector{Float64},Float64}}
     events = i.events
     if i.u_modified                                  # changed between steps: the conditions again
-        for k in eachindex(events)
-            i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
-        end
+        events_at!(events, i.ev, i.u, i.t, iv)
         i.u_modified = false
     end
     if i.dt_reset
@@ -384,9 +380,9 @@ function rodas5_advance!(i::Rodas5Integrator)
             i.t = tnew
             i.dt = dt
             i.naccept += 1
-            ke, up = 0, false
+            ke = 0
             if !isempty(events)
-                ke, te, up = locate_events!(events, i.evprev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
+                ke, te = locate_events!(events, i.ev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
                 if ke != 0                                   # the integrator moves to the earliest event
                     step_interp!(iv, i.utilde, te)
                     copyto!(i.u, i.utilde)
@@ -399,13 +395,12 @@ function rodas5_advance!(i::Rodas5Integrator)
             if ke != 0
                 saved || save_state!(i)                      # the state before the affect
                 i.u_modified = true
-                event_affect_dir!(events[ke], iv, up)
+                step_event_affect!(events[ke], iv, i.ev.signs[ke])   # told which of its conditions crossed
                 i.u_modified && save_state!(i)               # and after it
                 saved = false
                 i.u_modified = false
-                for k in eachindex(events)                   # the conditions again at the event's state;
-                    i.evprev[k] = k == ke ? NaN : step_event_condition(events[k], i.u, i.t, iv)
-                end                                          # the event's own a little into the next step
+                events_after!(events, i.ev, ke, i.u, i.t, iv)   # the conditions again at the event's state;
+                                                             # the crossed ones a little into the next step
             end
             for cb in i.callbacks
                 if step_condition(cb, i.u, i.t, iv)

@@ -31,6 +31,8 @@ export ODEProblemTrait, rhs!, jacobian!, rhs_function, Trajectory, Callback, con
        solve_ode, ODEProblem, FunctionCallback, RHSSig, DualSig, JacSig, DUAL_CHUNK, CondSig, AffectSig, FDual, ODETag,
        no_jacobian, add_tstop!, terminate!, interp!, EventCallback, event_condition, event_affect!,
        DiscreteCallback, ContinuousCallback, FunctionEventCallback, EnteredCallbacks, enter_callbacks, enter_callbacks!,
+       VectorContinuousCallback, VectorEventCallback, vector_event_length, vector_event_condition!, vector_event_affect!,
+       vector_event_initialize!, FunctionVectorEventCallback, VecCondSig, VecAffectSig,
        CoreProblem, core_problem, adapt_callbacks, ODEAlgorithm, solve_core, LinearSolver, linfactor, DenseLU,
        NonlinearSolver, NLCache, nlcache, nlstage!, Newton, newton_stage!, getseries, StepView, StepCallback, StepEvent, StepCallbacks,
        enter_step_callback!, ParamIntegrator,
@@ -145,19 +147,37 @@ falls (SciML's `affect!` and `affect_neg!`; by default the same). Every crossing
 end
 
 """
+    VectorEventCallback{U, T, P}
+
+A continuous callback of several conditions (SciML's `VectorContinuousCallback`): `vector_event_condition!` writes
+its `vector_event_length` conditions into `out`, once per point whatever their number; an event where one changes
+sign within a step, located per condition; the solver moves the integrator to the earliest and calls
+`vector_event_affect!`, told which conditions crossed there: `signs[j]` is `1` where condition `j` rose through zero,
+`-1` where it fell, `0` elsewhere. `vector_event_initialize!` runs once at the solver's `init`.
+"""
+@trait VectorEventCallback{U, T, P} begin
+    vector_event_length(cb::VectorEventCallback{U, T, P})::Int
+    vector_event_condition!(cb::VectorEventCallback{U, T, P}, out::Vector{Float64}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Nothing
+    vector_event_affect!(cb::VectorEventCallback{U, T, P}, integ::Dynamic{IntegratorView{U, T, P}}, signs::Vector{Int8})::Nothing
+    vector_event_initialize!(cb::VectorEventCallback{U, T, P}, u::U, t::T, integ::Dynamic{IntegratorView{U, T, P}})::Nothing = nothing
+end
+
+"""
     EnteredCallbacks{U, T, P}
 
 The user's callbacks entered at a problem's types `(U, T, P)`: the discrete ones in a `Vector{Callback{U, T, P}}`,
-the continuous ones in a `Vector{EventCallback{U, T, P}}`. Storage typed by the traits (traits reference §8.1): each
+the continuous ones in a `Vector{EventCallback{U, T, P}}`, those of several conditions in a
+`Vector{VectorEventCallback{U, T, P}}`. Storage typed by the traits (traits reference §8.1): each
 callback is kept in the form it was given, and code over the record is fully typed (§14). Made by `enter_callbacks`
 where the problem's types are known: `ODEProblem` keeps its callbacks so, `solve` and `init` enter theirs.
 """
 struct EnteredCallbacks{U,T,P}
     discrete::Vector{Callback{U,T,P}}
     continuous::Vector{EventCallback{U,T,P}}
+    vector::Vector{VectorEventCallback{U,T,P}}
 end
-EnteredCallbacks{U,T,P}() where {U,T,P} = EnteredCallbacks{U,T,P}(Callback{U,T,P}[], EventCallback{U,T,P}[])
-Base.isempty(e::EnteredCallbacks) = isempty(e.discrete) && isempty(e.continuous)
+EnteredCallbacks{U,T,P}() where {U,T,P} = EnteredCallbacks{U,T,P}(Callback{U,T,P}[], EventCallback{U,T,P}[], VectorEventCallback{U,T,P}[])
+Base.isempty(e::EnteredCallbacks) = isempty(e.discrete) && isempty(e.continuous) && isempty(e.vector)
 
 """
     StepView{U, T}
@@ -185,11 +205,15 @@ end
     step_initialize!(cb::StepCallback{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing = nothing
 end
 
-"A continuous callback as the solver core calls it: `step_event_affect!` on a rising crossing, `step_event_affect_neg!` on a falling one."
+"""
+A continuous callback as the solver core calls it: `step_event_length` conditions, written into `out` (of that length)
+by `step_event_condition!`; an event where one changes sign; `step_event_affect!` told the crossings' signs, one per
+condition (`1` rising, `-1` falling, `0` none). A callback of one condition is a vector of one.
+"""
 @trait StepEvent{U, T} begin
-    step_event_condition(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Float64
-    step_event_affect!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing
-    step_event_affect_neg!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}})::Nothing = step_event_affect!(cb, sv)
+    step_event_length(cb::StepEvent{U, T})::Int
+    step_event_condition!(cb::StepEvent{U, T}, out::Vector{Float64}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing
+    step_event_affect!(cb::StepEvent{U, T}, sv::Dynamic{StepView{U, T}}, signs::Vector{Int8})::Nothing
     step_event_initialize!(cb::StepEvent{U, T}, u::U, t::T, sv::Dynamic{StepView{U, T}})::Nothing = nothing
 end
 
@@ -211,6 +235,23 @@ Base.isempty(cs::StepCallbacks) = isempty(cs.discrete) && isempty(cs.continuous)
 enter_step_callback!(cs::StepCallbacks{U,T}, cb::StepEvent{U,T}) where {U,T} = (push!(cs.continuous, cb); cs)
 enter_step_callback!(cs::StepCallbacks{U,T}, cb::StepCallback{U,T}) where {U,T} = (push!(cs.discrete, cb); cs)
 enter_step_callback!(cs::StepCallbacks{U,T}, cb::All{StepEvent{U,T}, StepCallback{U,T}}) where {U,T} = (push!(cs.continuous, cb); cs)
+
+"""
+The continuous callbacks' state in a solver, per callback: its conditions at the last accepted point (`prev`; `NaN`
+just after its own event), scratch for its conditions (`cur`, `nudge`, `bis`) and the signs its affect is told.
+"""
+struct EventState
+    prev::Vector{Vector{Float64}}
+    cur::Vector{Vector{Float64}}
+    nudge::Vector{Vector{Float64}}
+    bis::Vector{Vector{Float64}}
+    signs::Vector{Vector{Int8}}
+end
+function EventState(events::Vector{StepEvent{U,T}}) where {U,T}
+    n = Int[step_event_length(e) for e in events]
+    z() = [zeros(k) for k in n]
+    return EventState(z(), z(), z(), z(), [zeros(Int8, k) for k in n])
+end
 
 """
     Interpolant{U, T}
@@ -364,6 +405,9 @@ const JacSig{P,T} = Tuple{Matrix{T},Vector{T},P,Float64}
 const CondSig{U,T,P} = Tuple{U,T,Dynamic{IntegratorView{U,T,P}}}
 "The signature of a plain `affect!(integ)`."
 const AffectSig{U,T,P} = Tuple{Dynamic{IntegratorView{U,T,P}}}
+"A vector continuous callback's condition, `condition(out, u, t, integ)`, and its affect, `affect!(integ, signs)`."
+const VecCondSig{U,T,P} = Tuple{Vector{Float64},U,T,Dynamic{IntegratorView{U,T,P}}}
+const VecAffectSig{U,T,P} = Tuple{Dynamic{IntegratorView{U,T,P}},Vector{Int8}}
 
 # --- ForwardDiff's dual numbers, tagged by the library ----------------------------------------
 # (wrapping by facts: the trait module calls ForwardDiff directly; session 23 used its own duals)
@@ -585,6 +629,22 @@ struct ContinuousCallback
     Base.@nospecializeinfer ContinuousCallback(@nospecialize(c), @nospecialize(a), @nospecialize(an = a); @nospecialize(initialize = no_initialize)) =
         new(c, _affect(a), _affect(an), initialize)
 end
+"""
+    VectorContinuousCallback(condition, affect!, len; initialize = no_initialize)
+
+A continuous callback of `len` conditions from plain functions (SciML's): `condition(out, u, t, integ)` writes them
+into `out`, a `Vector{Float64}` of length `len`; `affect!(integ, signs)` at the earliest crossing, `signs` a
+`Vector{Int8}` (`1`: condition `j` rose through zero there, `-1`: it fell, `0`: neither). Entered at the problem's types
+as `ContinuousCallback` is (`FunctionVectorEventCallback`).
+"""
+struct VectorContinuousCallback
+    condition::Callable
+    affect!::Callable
+    len::Int
+    initialize::Callable
+    Base.@nospecializeinfer VectorContinuousCallback(@nospecialize(c), @nospecialize(a), len::Integer; @nospecialize(initialize = no_initialize)) =
+        len >= 1 ? new(c, _affect(a), Int(len), initialize) : throw(ArgumentError("VectorContinuousCallback: len is at least 1"))
+end
 "A callback's `initialize` that does nothing (the default)."
 no_initialize(u, t, integ) = nothing
 Base.@nospecializeinfer _affect(@nospecialize(a)) = a === nothing ?
@@ -626,6 +686,26 @@ event_affect_neg!(cb::FunctionEventCallback{U,T,P}, integ::Dynamic{IntegratorVie
 event_initialize!(cb::FunctionEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} = (cb.init(u, t, integ); nothing)
 @implement EventCallback{U,T,P} FunctionEventCallback{U,T,P,C,A,N,I} where {U,T,P,C,A,N,I}
 
+"A vector continuous callback as the integrator keeps it, its functions in the forms they were given."
+struct FunctionVectorEventCallback{U,T,P,C<:Callable{VecCondSig{U,T,P},Nothing},A<:Callable{VecAffectSig{U,T,P},Nothing},
+                                   I<:Callable{CondSig{U,T,P},Nothing}}
+    cond::C
+    aff::A
+    len::Int
+    init::I
+end
+FunctionVectorEventCallback{U,T,P}(c::Callable{VecCondSig{U,T,P},Nothing}, a::Callable{VecAffectSig{U,T,P},Nothing}, len::Int,
+                                   i::Callable{CondSig{U,T,P},Nothing}) where {U,T,P} =
+    FunctionVectorEventCallback{U,T,P,typeof(c),typeof(a),typeof(i)}(c, a, len, i)
+vector_event_length(cb::FunctionVectorEventCallback) = cb.len
+vector_event_condition!(cb::FunctionVectorEventCallback{U,T,P}, out::Vector{Float64}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} =
+    (cb.cond(out, u, t, integ); nothing)
+vector_event_affect!(cb::FunctionVectorEventCallback{U,T,P}, integ::Dynamic{IntegratorView{U,T,P}}, signs::Vector{Int8}) where {U,T,P} =
+    (cb.aff(integ, signs); nothing)
+vector_event_initialize!(cb::FunctionVectorEventCallback{U,T,P}, u::U, t::T, integ::Dynamic{IntegratorView{U,T,P}}) where {U,T,P} =
+    (cb.init(u, t, integ); nothing)
+@implement VectorEventCallback{U,T,P} FunctionVectorEventCallback{U,T,P,C,A,I} where {U,T,P,C,A,I}
+
 """
     enter_callbacks(cbs, U, P) -> EnteredCallbacks{U, Float64, P}
     enter_callbacks!(e, cbs) -> e
@@ -644,10 +724,11 @@ enter_callbacks!(e::EnteredCallbacks, ::Nothing) = e
 enter_callbacks!(e::EnteredCallbacks, cbs::Tuple) = (_enter_each!(e, cbs...); e)
 enter_callbacks!(e::EnteredCallbacks, cbs::AbstractVector) = (for cb in cbs; _enter_callback!(e, cb); end; e)
 enter_callbacks!(e::EnteredCallbacks{U,T,P}, cbs::EnteredCallbacks{U,T,P}) where {U,T,P} =
-    (append!(e.discrete, cbs.discrete); append!(e.continuous, cbs.continuous); e)
+    (append!(e.discrete, cbs.discrete); append!(e.continuous, cbs.continuous); append!(e.vector, cbs.vector); e)
 function enter_callbacks!(e::EnteredCallbacks, cbs::EnteredCallbacks)
     for cb in cbs.discrete; _enter_callback!(e, cb); end
     for cb in cbs.continuous; _enter_callback!(e, cb); end
+    for cb in cbs.vector; _enter_callback!(e, cb); end
     return e
 end
 enter_callbacks!(e::EnteredCallbacks, cb) = (_enter_callback!(e, cb); e)
@@ -659,20 +740,33 @@ _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::DiscreteCallback) where {U,T,P}
     (push!(e.discrete, FunctionCallback{U,T,P}(cb.condition, cb.affect!, cb.initialize)); nothing)
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::ContinuousCallback) where {U,T,P} =
     (push!(e.continuous, FunctionEventCallback{U,T,P}(cb.condition, cb.affect!, cb.affect_neg!, cb.initialize)); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::VectorContinuousCallback) where {U,T,P} =
+    (push!(e.vector, FunctionVectorEventCallback{U,T,P}(cb.condition, cb.affect!, cb.len, cb.initialize)); nothing)
 # a callback value goes to the vector of its trait, chosen by its bound (traits reference §5.5), which takes a
-# plain member, a box and a wrapper alike; a value of both traits is a continuous one
+# plain member, a box and a wrapper alike; a value of both traits is a continuous one, and a value of
+# `VectorEventCallback` is one of several conditions, whatever else it implements (the joint methods, traits §6.3)
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::EventCallback{U,T,P}) where {U,T,P} = (push!(e.continuous, cb); nothing)
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::Callback{U,T,P}) where {U,T,P} = (push!(e.discrete, cb); nothing)
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::All{EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
     (push!(e.continuous, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::VectorEventCallback{U,T,P}) where {U,T,P} = (push!(e.vector, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::All{VectorEventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
+    (push!(e.vector, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::All{VectorEventCallback{U,T,P}, EventCallback{U,T,P}}) where {U,T,P} =
+    (push!(e.vector, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::All{VectorEventCallback{U,T,P}, EventCallback{U,T,P}, Callback{U,T,P}}) where {U,T,P} =
+    (push!(e.vector, cb); nothing)
 # SciML's records entered at other types: entered again from the functions they keep (a box's function; a
 # wrapper as it is), at the new types; at their own types, kept
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::FunctionCallback{U,T,P}) where {U,T,P} = (push!(e.discrete, cb); nothing)
 _enter_callback!(e::EnteredCallbacks{U,T,P}, cb::FunctionEventCallback{U,T,P}) where {U,T,P} = (push!(e.continuous, cb); nothing)
+_enter_callback!(e::EnteredCallbacks{U,T,P}, cb::FunctionVectorEventCallback{U,T,P}) where {U,T,P} = (push!(e.vector, cb); nothing)
 _enter_callback!(e::EnteredCallbacks, cb::FunctionCallback) =
     _enter_callback!(e, DiscreteCallback(_given(cb.cond), _given(cb.aff); initialize = _given(cb.init)))
 _enter_callback!(e::EnteredCallbacks, cb::FunctionEventCallback) =
     _enter_callback!(e, ContinuousCallback(_given(cb.cond), _given(cb.aff), _given(cb.affneg); initialize = _given(cb.init)))
+_enter_callback!(e::EnteredCallbacks, cb::FunctionVectorEventCallback) =
+    _enter_callback!(e, VectorContinuousCallback(_given(cb.cond), _given(cb.aff), cb.len; initialize = _given(cb.init)))
 "A function as it was given to a callback: a box's object (the box was made at the old signature), else the value."
 _given(k::Dynamic) = unwrap(k)
 _given(@nospecialize(k)) = k
@@ -761,15 +855,29 @@ struct ParamEvent{U,T,P}
     pi::ParamIntegrator{U,T,P}
     view::Dynamic{IntegratorView{U,T,P}}
 end
-step_event_condition(c::ParamEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
-    (_sync_in!(c.pi, sv); event_condition(c.cb, u, t, c.view))
-step_event_affect!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
-    (_sync_in!(c.pi, sv); event_affect!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
-step_event_affect_neg!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}) where {U,T} =
-    (_sync_in!(c.pi, sv); event_affect_neg!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
+step_event_length(c::ParamEvent) = 1
+step_event_condition!(c::ParamEvent{U,T}, out::Vector{Float64}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); out[1] = event_condition(c.cb, u, t, c.view); nothing)
+step_event_affect!(c::ParamEvent{U,T}, sv::Dynamic{StepView{U,T}}, signs::Vector{Int8}) where {U,T} =
+    (_sync_in!(c.pi, sv); signs[1] > 0 ? event_affect!(c.cb, c.view) : event_affect_neg!(c.cb, c.view); _sync_out!(c.pi, sv); nothing)
 step_event_initialize!(c::ParamEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
     (_sync_in!(c.pi, sv); event_initialize!(c.cb, u, t, c.view); _sync_out!(c.pi, sv); nothing)
 @implement StepEvent{U,T} ParamEvent{U,T,P} where {U,T,P}
+
+"A user's continuous callback of several conditions, adapted to the solver core."
+struct ParamVectorEvent{U,T,P}
+    cb::VectorEventCallback{U,T,P}
+    pi::ParamIntegrator{U,T,P}
+    view::Dynamic{IntegratorView{U,T,P}}
+end
+step_event_length(c::ParamVectorEvent) = vector_event_length(c.cb)
+step_event_condition!(c::ParamVectorEvent{U,T}, out::Vector{Float64}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); vector_event_condition!(c.cb, out, u, t, c.view); nothing)
+step_event_affect!(c::ParamVectorEvent{U,T}, sv::Dynamic{StepView{U,T}}, signs::Vector{Int8}) where {U,T} =
+    (_sync_in!(c.pi, sv); vector_event_affect!(c.cb, c.view, signs); _sync_out!(c.pi, sv); nothing)
+step_event_initialize!(c::ParamVectorEvent{U,T}, u::U, t::T, sv::Dynamic{StepView{U,T}}) where {U,T} =
+    (_sync_in!(c.pi, sv); vector_event_initialize!(c.cb, u, t, c.view); _sync_out!(c.pi, sv); nothing)
+@implement StepEvent{U,T} ParamVectorEvent{U,T,P} where {U,T,P}
 
 "The outer layer's integrator for a problem's types: its parameters (saved at `t0` when callbacks may change them), system and names."
 function param_integrator(::Type{U}, p::P, t0::Float64, sys, names, save::Bool) where {U,P}
@@ -793,6 +901,7 @@ function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::EnteredCallbacks{U,T,
     out = StepCallbacks{U,T}()
     for k in cbs.discrete; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)); end
     for k in cbs.continuous; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)); end
+    for k in cbs.vector; push!(out.continuous, ParamVectorEvent{U,T,P}(k, pi, view)); end
     return out
 end
 
@@ -1089,7 +1198,7 @@ mutable struct Tsit5Integrator{T,M}
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{T},Float64}}
     const events::Vector{StepEvent{Vector{T},Float64}}
-    const evprev::Vector{Float64}
+    const ev::EventState
     # the driver's state between steps
     iv::Union{Nothing,Dynamic{StepView{Vector{T},Float64}}}   # the integrator as its callbacks see it
     const opts::SolverOptions
@@ -1380,7 +1489,7 @@ function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::
     z() = zeros(T, n)
     i = Tsit5Integrator{T,typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false,
                                      z(), z(), z(), z(), z(), z(), z(), z(), z(), z(), 1e-4, 0, 0, 0,
-                                     t0, z(), Float64[], d, c, zeros(Float64, length(c)),
+                                     t0, z(), Float64[], d, c, EventState(c),
                                      nothing, opts, tf, 0.0, Float64[], Vector{T}[], 1, 0, :Default, false,
                                      opts.dense ? Tsit5Steps{T}() : nothing)
     iv = Dynamic{StepView{Vector{T},Float64}}(i)
@@ -1394,9 +1503,7 @@ function tsit5_init(m, u0::Vector{T}, tspan::Tuple{Float64,Float64}, callbacks::
     i.nf += 1
     i.dtnext = initdt(m, i, 1.0, opts)
     _save_start!(i.ts, i.us, i.u, t0, opts.saveat) && (i.isave = 2)
-    for k in eachindex(i.events)
-        i.evprev[k] = step_event_condition(i.events[k], i.u, i.t, iv)
-    end
+    events_at!(i.events, i.ev, i.u, i.t, iv)
     return i
 end
 "The first save: the state at `t0`, unless `saveat` starts later; `true` when `saveat`'s first time is `t0`."
@@ -1438,17 +1545,38 @@ modified (a continuous callback) or always (a discrete one).
 """
 save_state!(i) = (push!(i.ts, i.t); push!(i.us, copy(i.u)); nothing)
 
+"Every callback's conditions at the state `(u, t)`, as the last accepted point's (a solver's start, a state changed)."
+function events_at!(events::Vector{StepEvent{U,T}}, ev::EventState, u::U, t::T, iv::Dynamic{StepView{U,T}}) where {U,T}
+    for k in eachindex(events)
+        step_event_condition!(events[k], ev.prev[k], u, t, iv)
+    end
+    return nothing
+end
 """
-The time of a sign change of a continuous callback's condition within `(tl, tr]`, `gl` its value at
-`tl`: bisection on the solver's interpolant, to the resolution of `Float64`; returns the last time
-found on `tl`'s side, so the state there has not crossed. (The same text as PlainODE's.)
+After callback `ke`'s event at `(u, t)`: every callback's conditions there; those of `ke` that crossed are read a little
+into the next step (`NaN`, SciML's repeat nudge).
 """
-function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
+function events_after!(events::Vector{StepEvent{U,T}}, ev::EventState, ke::Int, u::U, t::T, iv::Dynamic{StepView{U,T}}) where {U,T}
+    events_at!(events, ev, u, t, iv)
+    p, sg = ev.prev[ke], ev.signs[ke]
+    for j in eachindex(sg)
+        sg[j] != 0 && (p[j] = NaN)
+    end
+    return nothing
+end
+
+"""
+The time of a sign change of condition `j` of a continuous callback within `(tl, tr]`, `gl` its value at `tl`:
+bisection on the solver's interpolant, to the resolution of `Float64`, every condition evaluated into `buf`; returns
+the last time found on `tl`'s side, so the state there has not crossed. (The same text as PlainODE's, by condition.)
+"""
+function event_time(cb, j::Int, buf::Vector{Float64}, iv, out, tl::Float64, tr::Float64, gl::Float64)
     for _ in 1:100
         tm = (tl + tr) / 2
         (tm <= tl || tm >= tr) && break
         step_interp!(iv, out, tm)
-        gm = step_event_condition(cb, out, tm, iv)
+        step_event_condition!(cb, buf, out, tm, iv)
+        gm = buf[j]
         if gm != 0 && (gm > 0) == (gl > 0)
             tl = tm
         else
@@ -1459,37 +1587,40 @@ function event_time(cb, iv, out, tl::Float64, tr::Float64, gl::Float64)
 end
 
 """
-The continuous callbacks' events within the step just accepted (`[tprev, t]`): each condition's sign change,
-located by bisection on the interpolant (`event_time`); the integrator is moved to the earliest. Returns the
-event's callback (`0`: none) and whether its condition rose through zero. A callback's condition just after
-its own event (`NaN` in `evprev`) is read a little into the step (SciML's repeat nudge). Shared by the solvers.
+The continuous callbacks' events within the step just accepted (`[tprev, t]`): each condition's sign change, its
+callback's conditions evaluated once per point, located by bisection on the interpolant (`event_time`). Returns the
+callback of the earliest event (`0`: none) and its time; that callback's signs mark its conditions that cross at that
+time (`1` rising, `-1` falling). A condition just after its callback's event (`NaN`) is read a little into the step
+(SciML's repeat nudge). Shared by the solvers.
 """
-function locate_events!(events::Vector{StepEvent{Vector{Float64},Float64}}, evprev::Vector{Float64},
+function locate_events!(events::Vector{StepEvent{Vector{Float64},Float64}}, ev::EventState,
                         iv::StepView{Vector{Float64},Float64}, u::Vector{Float64}, utilde::Vector{Float64},
                         tprev::Float64, t::Float64, dt::Float64)
-    ke, te, up = 0, t, false
+    ke, te = 0, t
+    tn = tprev + dt / 100
     for k in eachindex(events)
-        g = step_event_condition(events[k], u, t, iv)
-        g0 = evprev[k]
-        tl = tprev
-        if isnan(g0)                         # the step after this callback's event: its value a
-            tl = tprev + dt / 100            # little into the step (SciML's repeat nudge)
-            step_interp!(iv, utilde, tl)
-            g0 = step_event_condition(events[k], utilde, tl, iv)
+        cb, g, g0s, sg = events[k], ev.cur[k], ev.prev[k], ev.signs[k]
+        step_event_condition!(cb, g, u, t, iv)
+        if any(isnan, g0s)                   # the step after this callback's event: its conditions a
+            step_interp!(iv, utilde, tn)     # little into the step (SciML's repeat nudge)
+            step_event_condition!(cb, ev.nudge[k], utilde, tn, iv)
         end
-        if g0 != 0 && (g == 0 || (g > 0) != (g0 > 0))
-            tk = event_time(events[k], iv, utilde, tl, t, g0)
-            if ke == 0 || tk < te
-                ke, te, up = k, tk, g0 < 0
+        fill!(sg, Int8(0))
+        tk = Inf
+        for j in eachindex(g)
+            g0, tl = g0s[j], tprev
+            isnan(g0) && ((g0, tl) = (ev.nudge[k][j], tn))
+            if g0 != 0 && (g[j] == 0 || (g[j] > 0) != (g0 > 0))
+                tj = event_time(cb, j, ev.bis[k], iv, utilde, tl, t, g0)
+                tj < tk && (tk = tj; fill!(sg, Int8(0)))
+                tj == tk && (sg[j] = g0 < 0 ? Int8(1) : Int8(-1))
             end
         end
-        evprev[k] = g
+        tk < Inf && (ke == 0 || tk < te) && ((ke, te) = (k, tk))
+        copyto!(g0s, g)
     end
-    return ke, te, up
+    return ke, te
 end
-
-"The event's affect: `step_event_affect!` where the condition rose, `step_event_affect_neg!` where it fell."
-event_affect_dir!(cb, iv, up::Bool) = up ? step_event_affect!(cb, iv) : step_event_affect_neg!(cb, iv)
 
 """
 Tsit5's `advance!`: one accepted step (rejected attempts within it), its continuous callbacks' events, the saves,
@@ -1503,9 +1634,7 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
     if i.u_modified                                  # changed between steps: f(u, t) and the conditions again
         core_rhs!(m, i.k1, i.u, i.t)
         i.nf += 1
-        for k in eachindex(events)
-            i.evprev[k] = step_event_condition(events[k], i.u, i.t, iv)
-        end
+        events_at!(events, i.ev, i.u, i.t, iv)
         i.u_modified = false
     end
     if i.dt_reset                                    # `auto_dt_reset!`: the step's size from the state
@@ -1540,9 +1669,9 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
             i.t = tnew
             i.dt = dt
             i.naccept += 1
-            ke, up = 0, false
+            ke = 0
             if T === Float64 && !isempty(events)
-                ke, te, up = locate_events!(events, i.evprev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
+                ke, te = locate_events!(events, i.ev, iv, i.u, i.utilde, i.tprev, i.t, i.dt)
                 if ke != 0                                   # the integrator moves to the earliest event
                     step_interp!(iv, i.utilde, te)
                     copyto!(i.u, i.utilde)
@@ -1555,15 +1684,14 @@ function tsit5_advance!(i::Tsit5Integrator{T}) where {T}
             if ke != 0
                 saved || save_state!(i)                      # the state before the affect
                 i.u_modified = true
-                event_affect_dir!(events[ke], iv, up)
+                step_event_affect!(events[ke], iv, i.ev.signs[ke])   # told which of its conditions crossed
                 i.u_modified && save_state!(i)               # and after it
                 saved = false
                 core_rhs!(m, i.k1, i.u, i.t)                     # the time moved back: f(u, t) again
                 i.nf += 1
                 i.u_modified = false
-                for k in eachindex(events)                   # the conditions again at the event's state;
-                    i.evprev[k] = k == ke ? NaN : step_event_condition(events[k], i.u, i.t, iv)
-                end                                          # the event's own a little into the next step
+                events_after!(events, i.ev, ke, i.u, i.t, iv)   # the conditions again at the event's state;
+                                                             # the crossed ones a little into the next step
             end
             T === Float64 && for cb in i.callbacks
                 if step_condition(cb, i.u, i.t, iv)

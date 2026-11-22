@@ -13,7 +13,7 @@ using ODECore
 # at, the step-callback machinery, and the step view's operations, which this package implements for its integrator
 using ODECore: CoreProblem, CoreDualSig, FDual, CoreSolution, SolverOptions, StepView, ODEAlgorithm, ODEStepper,
                CoreIntegrator, core_rhs!, core_jacobian!, StepCallbacks, initialize_step_callbacks!, _add_tstop!,
-               step_event_condition, step_condition, step_affect!, locate_events!, event_affect_dir!,
+               step_event_affect!, step_condition, step_affect!, locate_events!, EventState, events_at!, events_after!,
                _save_start!, _retcode, run_to_end!, LinearSolver, linfactor, DenseLU, Interpolant, dense_step,
                _steps, save_step!, save_state!
 import ODECore: solve_core, init_core, advance!, core_solution, step_tstop!, step_terminate!, step_interp!, step_dt_reset!,
