@@ -125,10 +125,11 @@ end
 """
 Rodas5's state between steps, with its problem and the driver's state: the integrator's view for callbacks, the
 stages, the Jacobian and W; `jc`, the function at the duals entered at `init` (`DualJacobian`), or `nothing`: the
-problem's `jacobian!`. After an accepted step `uprev` is its start, `unew` its end and `kint` its interpolant's
-terms, until the next step.
+problem's `jacobian!`; `ls`, the algorithm's linear solver at its type `L` (a type that is known is kept as a
+parameter, traits reference §7.10), so the factorization and its solves are compiled for it. After an accepted step
+`uprev` is its start, `unew` its end and `kint` its interpolant's terms, until the next step.
 """
-mutable struct Rodas5Integrator{JC,M}
+mutable struct Rodas5Integrator{JC,M,L}
     const m::M
     const u::Vector{Float64}
     const uprev::Vector{Float64}
@@ -152,7 +153,7 @@ mutable struct Rodas5Integrator{JC,M}
     nf::Int
     njac::Int
     const jc::JC
-    const ls::LinearSolver           # W's factorization, per step
+    const ls::L                      # W's factorization, per step: the algorithm's linear solver, at its type
     tprev::Float64
     const tstops::Vector{Float64}
     const callbacks::Vector{StepCallback{Vector{Float64},Float64}}
@@ -180,8 +181,8 @@ function step_interp!(i::Rodas5Integrator, out::Vector{Float64}, τ::Float64)
     return nothing
 end
 step_dt_reset!(i::Rodas5Integrator) = (i.dt_reset = true; nothing)
-@implement StepView{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M}
-@implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M} where {JC,M} begin
+@implement StepView{Vector{Float64},Float64} Rodas5Integrator{JC,M,L} where {JC,M,L}
+@implement CoreIntegrator{Vector{Float64},Float64} Rodas5Integrator{JC,M,L} where {JC,M,L} begin
     advance!(i) = rodas5_advance!(i)
     core_solution(i) = CoreSolution{Float64}(i.ts, i.us, _retcode(i), i.naccept, i.nreject, i.nf,
                                              _steps(i.dense))
@@ -309,7 +310,7 @@ function rodas5_start(m, u0::Vector{Float64}, tspan::Tuple{Float64,Float64},
     n = length(u0)
     z() = zeros(Float64, n)
     d, c = callbacks.discrete, callbacks.continuous
-    i = Rodas5Integrator{typeof(jc),typeof(m)}(m, copy(u0), copy(u0), t0, 0.0, false, false, z(),
+    i = Rodas5Integrator{typeof(jc),typeof(m),typeof(ls)}(m, copy(u0), copy(u0), t0, 0.0, false, false, z(),
                                     [z() for _ in 1:8], [z() for _ in 1:3], z(), z(), z(), z(), z(),
                                     zeros(Float64, n, n), zeros(Float64, n, n), 1e-4, 0, 0, 0, 0, jc, ls,
                                     t0, Float64[], d, c, zeros(Float64, length(c)), z(),
