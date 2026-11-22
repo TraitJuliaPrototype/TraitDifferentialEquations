@@ -899,9 +899,12 @@ adapt_callbacks(cbs, ::Type{U}, p::P) where {U,P} =
 function adapt_callbacks!(pi::ParamIntegrator{U,T,P}, cbs::EnteredCallbacks{U,T,P}) where {U,T,P}
     view = Dynamic{IntegratorView{U,T,P}}(pi)
     out = StepCallbacks{U,T}()
-    for k in cbs.discrete; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)); end
-    for k in cbs.continuous; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)); end
-    for k in cbs.vector; push!(out.continuous, ParamVectorEvent{U,T,P}(k, pi, view)); end
+    # each adapter's type is its constructor's: the constructor's call at a value known by its trait is left to dispatch,
+    # so its result is asserted, and the push is compiled here (an image keeps another package's code, Base's `push!`,
+    # where its own code calls it; open issue 228)
+    for k in cbs.discrete; push!(out.discrete, ParamCallback{U,T,P}(k, pi, view)::ParamCallback{U,T,P}); end
+    for k in cbs.continuous; push!(out.continuous, ParamEvent{U,T,P}(k, pi, view)::ParamEvent{U,T,P}); end
+    for k in cbs.vector; push!(out.continuous, ParamVectorEvent{U,T,P}(k, pi, view)::ParamVectorEvent{U,T,P}); end
     return out
 end
 

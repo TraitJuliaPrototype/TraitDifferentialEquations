@@ -137,6 +137,11 @@ if Base.generating_output(true)   # a precompile workload, run while the package
     # the view's operations, and a continuous callback (its bisection on interp!)
     solve(prob, Tsit5(); callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (add_tstop!(i, 0.08); terminate!(i); nothing)))
     solve(prob, Tsit5(); callback = ContinuousCallback((u, t, i) -> u[1] - 1.5, i -> (i.u[1] = 1.0; nothing)))
+    # one discrete and one continuous callback, as a program gives them: the problem's own, and a tuple to `solve`
+    pcb = ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1), [10.0, 28.0, 8 / 3];
+                     callback = DiscreteCallback((u, t, i) -> t > 0.05, i -> (i.u[1] += 1.0; nothing)))
+    solve(pcb, Tsit5(); callback = (ContinuousCallback((u, t, i) -> u[1] - 1.5, i -> (i.u[2] += 0.5; nothing)),),
+          reltol = 1e-6, abstol = 1e-8)
     solve(ODEProblem(_wl_rhs0!, [1.0], (0.0, 0.1)), Tsit5())
     solve(prob, Rodas5())
     solve(ODEProblem(_wl_rhs!, [1.0, 0.0, 0.0], (0.0, 0.1)), Rodas5())   # no parameters (p::Nothing)
